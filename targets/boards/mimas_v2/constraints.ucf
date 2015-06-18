@@ -1,0 +1,36 @@
+############################################################################
+# VCC AUX VOLTAGE 
+############################################################################
+CONFIG VCCAUX="3.3";
+
+############################################################################
+
+NET "PIN_CLK_100MHz" TNM_NET = CLOCK_100MHZ | IOSTANDARD = LVCMOS33;
+TIMESPEC TS_CLOCK_100MHZ = PERIOD CLOCK_100MHZ 100 MHz;
+
+# 32ns period for 31.25MHz
+NET "clk_sys" TNM_NET = clk_31_31;
+TIMESPEC TS_CLOCK_31 = PERIOD clk_31_31 31.25 MHz;
+
+# 31M 90 phase
+NET "clk_sys_90" TNM_NET = clk_31_90;
+TIMESPEC TS_CLOCK_31_90 = PERIOD clk_31_90 TS_CLOCK_31/1 PHASE + 8 ns;
+
+# 62M
+NET "clk_sys2x" TNM_NET = clk_62_62;
+TIMESPEC TS_CLOCK_62 = PERIOD clk_62_62 62.5 MHz;
+
+TIMEGRP "dqs_pads"=PADS("PIN_MCB3_DRAM_?DQS");
+TIMEGRP "dq_pads"=PADS("PIN_MCB3_DRAM_DQ*");
+TIMEGRP "dq_pads" OFFSET = OUT : 31.0 ns AFTER PIN_CLK_100MHZ;
+TIMEGRP "dqs_pads" OFFSET = OUT : 31.0 ns AFTER PIN_CLK_100MHZ;
+
+TIMEGRP "ddr_pads"=PADS("PIN_MCB3_DRAM_*");
+TIMEGRP "clk_pads"=PADS("PIN_MCB3_DRAM_CK*");
+TIMEGRP "dm_pads"=PADS("PIN_MCB3_DRAM_?DM");
+TIMEGRP "ctrl_pads"="ddr_pads" EXCEPT "clk_pads" "dq_pads" "dqs_pads" "dm_pads";
+TIMEGRP "dm_pads" OFFSET = OUT : 31.0 ns AFTER PIN_CLK_100MHZ;
+TIMEGRP "clk_pads" OFFSET = OUT : 31.0 ns AFTER PIN_CLK_100MHZ;
+TIMEGRP "ctrl_pads" OFFSET = OUT : 28.0 ns AFTER PIN_CLK_100MHZ;
+TIMEGRP "dq_pads" OFFSET = IN : 0.1 ns VALID 16.0 ns BEFORE PIN_CLK_100MHZ RISING;
+TIMEGRP "dq_pads" OFFSET = IN : 0.1 ns VALID 16.0 ns BEFORE PIN_CLK_100MHZ FALLING;

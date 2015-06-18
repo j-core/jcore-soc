@@ -1,0 +1,93 @@
+[*]
+[*] GTKWave Analyzer v3.3.42 (w)1999-2012 BSI
+[*] Thu Jan  9 16:33:20 2014
+[*]
+[dumpfile] "/Users/dtsao/work/uartlite_dtsao/tests/uart_tb.ghw"
+[dumpfile_mtime] "Wed Jan  8 20:10:45 2014"
+[dumpfile_size] 1955553
+[savefile] "/Users/dtsao/work/uartlite_dtsao/tests/uart_tb.gtkw"
+[timestart] 0
+[size] 1669 803
+[pos] 17 -19
+*-37.882504 1214500000000 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[treeopen] top.
+[treeopen] top.uart_tb.
+[treeopen] top.uart_tb.a.
+[treeopen] top.uart_tb.u0.
+[treeopen] top.uart_tb.u0.this_r.
+[treeopen] top.uart_tb.u0.this_r.rx.
+[treeopen] top.uart_tb.u0.this_r.tx.
+[treeopen] top.uart_tb.u0.txfw.
+[treeopen] top.uart_tb.y.
+[sst_width] 257
+[signals_width] 176
+[sst_expanded] 1
+[sst_vpaned_height] 547
+@28
+top.uart_tb.rst
+top.uart_tb.clk
+top.uart_tb.a.we
+@29
+top.uart_tb.a.en
+@28
+top.uart_tb.y.ack
+top.uart_tb.a.dc
+@22
+#{top.uart_tb.a.d[7:0]} top.uart_tb.a.d[7] top.uart_tb.a.d[6] top.uart_tb.a.d[5] top.uart_tb.a.d[4] top.uart_tb.a.d[3] top.uart_tb.a.d[2] top.uart_tb.a.d[1] top.uart_tb.a.d[0]
+@28
+[color] 3
+top.uart_tb.y.int
+@22
+#{top.uart_tb.y.d[7:0]} top.uart_tb.y.d[7] top.uart_tb.y.d[6] top.uart_tb.y.d[5] top.uart_tb.y.d[4] top.uart_tb.y.d[3] top.uart_tb.y.d[2] top.uart_tb.y.d[1] top.uart_tb.y.d[0]
+@200
+-Tx FIFO
+@28
+top.uart_tb.u0.txfw.a
+top.uart_tb.u0.txfw.we
+@22
+#{top.uart_tb.u0.txfw.d[7:0]} top.uart_tb.u0.txfw.d[7] top.uart_tb.u0.txfw.d[6] top.uart_tb.u0.txfw.d[5] top.uart_tb.u0.txfw.d[4] top.uart_tb.u0.txfw.d[3] top.uart_tb.u0.txfw.d[2] top.uart_tb.u0.txfw.d[1] top.uart_tb.u0.txfw.d[0]
+#{top.uart_tb.u0.txf[0][7:0]} top.uart_tb.u0.txf[0][7] top.uart_tb.u0.txf[0][6] top.uart_tb.u0.txf[0][5] top.uart_tb.u0.txf[0][4] top.uart_tb.u0.txf[0][3] top.uart_tb.u0.txf[0][2] top.uart_tb.u0.txf[0][1] top.uart_tb.u0.txf[0][0]
+#{top.uart_tb.u0.txf[1][7:0]} top.uart_tb.u0.txf[1][7] top.uart_tb.u0.txf[1][6] top.uart_tb.u0.txf[1][5] top.uart_tb.u0.txf[1][4] top.uart_tb.u0.txf[1][3] top.uart_tb.u0.txf[1][2] top.uart_tb.u0.txf[1][1] top.uart_tb.u0.txf[1][0]
+@200
+-Tx engine
+@28
+top.uart_tb.u0.this_r.tx.s
+top.uart_tb.u0.this_r.tx.phs
+top.uart_tb.u0.this_r.tx.b
+@22
+#{top.uart_tb.u0.this_r.tx.sr[7:0]} top.uart_tb.u0.this_r.tx.sr[7] top.uart_tb.u0.this_r.tx.sr[6] top.uart_tb.u0.this_r.tx.sr[5] top.uart_tb.u0.this_r.tx.sr[4] top.uart_tb.u0.this_r.tx.sr[3] top.uart_tb.u0.this_r.tx.sr[2] top.uart_tb.u0.this_r.tx.sr[1] top.uart_tb.u0.this_r.tx.sr[0]
+@28
+top.uart_tb.tx
+top.uart_tb.u0.this_r.tx.full
+top.uart_tb.u0.this_r.tx.ovr
+@200
+-Rx engine
+@28
+top.uart_tb.rx
+top.uart_tb.u0.this_r.rx.s
+top.uart_tb.u0.this_r.rx.phs
+top.uart_tb.u0.this_r.rx.b
+@22
+#{top.uart_tb.u0.this_r.rx.sr[7:0]} top.uart_tb.u0.this_r.rx.sr[7] top.uart_tb.u0.this_r.rx.sr[6] top.uart_tb.u0.this_r.rx.sr[5] top.uart_tb.u0.this_r.rx.sr[4] top.uart_tb.u0.this_r.rx.sr[3] top.uart_tb.u0.this_r.rx.sr[2] top.uart_tb.u0.this_r.rx.sr[1] top.uart_tb.u0.this_r.rx.sr[0]
+@28
+top.uart_tb.u0.this_r.rx.ferr
+top.uart_tb.u0.this_r.rx.full
+top.uart_tb.u0.this_r.rx.ovr
+@200
+-Rx FIFO
+@22
+#{top.uart_tb.u0.rxf[0][7:0]} top.uart_tb.u0.rxf[0][7] top.uart_tb.u0.rxf[0][6] top.uart_tb.u0.rxf[0][5] top.uart_tb.u0.rxf[0][4] top.uart_tb.u0.rxf[0][3] top.uart_tb.u0.rxf[0][2] top.uart_tb.u0.rxf[0][1] top.uart_tb.u0.rxf[0][0]
+#{top.uart_tb.u0.rxf[1][7:0]} top.uart_tb.u0.rxf[1][7] top.uart_tb.u0.rxf[1][6] top.uart_tb.u0.rxf[1][5] top.uart_tb.u0.rxf[1][4] top.uart_tb.u0.rxf[1][3] top.uart_tb.u0.rxf[1][2] top.uart_tb.u0.rxf[1][1] top.uart_tb.u0.rxf[1][0]
+@28
+top.uart_tb.u0.this_r.itimeout_f
+top.uart_tb.u0.this_r.itimeout
+top.uart_tb.u0.this_r.rxp.ra
+top.uart_tb.u0.this_r.rxp.wa
+top.uart_tb.u0.this_r.txp.ra
+top.uart_tb.u0.this_r.txp.wa
+top.uart_tb.u0.rx_empty
+top.uart_tb.u0.this_r.dds[12]
+top.uart_tb.u0.tx_empty
+top.uart_tb.u0.tx_empty
+[pattern_trace] 1
+[pattern_trace] 0

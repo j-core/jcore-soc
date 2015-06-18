@@ -1,0 +1,40 @@
+{"uartlite"
+ {:entity "uartlitedb"
+  :regs [{:name "data"
+          :type :fixed
+          :width 1
+          :enum-item "DATA"
+          :addr 3}
+         {:name "ctrl"
+          :type :fixed
+          :width 1
+          :enum-item "CTRL"
+          :addr 7}]}
+ "uart16550"
+ {}
+ "gpio"
+ {:desc "General purpose IO"
+  :entity "pio"
+  :regs [{:name "value"
+          :type :fixed
+          :width 4}
+         {:name "mask"
+          :type :fixed
+          :width 4}
+         {:name "edge"
+          :type :fixed
+          :width 4}
+         {:name "changes"
+          :type :fixed
+          :width 4
+          :mode :read}]}
+ "spi"
+ {:regs [{:name "control"
+          :type :fixed
+          :width 1
+          :addr 3}
+         {:name "data"
+          :type :fixed
+          :width 1
+          :addr 4}]}
+}

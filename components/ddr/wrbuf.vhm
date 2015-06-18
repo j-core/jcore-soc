@@ -1,0 +1,127 @@
+-- Copyright (c) 2015, Smart Energy Instruments Inc.
+-- All rights reserved.  For details, see COPYING in the top level directory.
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+library work;
+use work.cpu2j0_pack.all;
+use work.wrbuf_pack.all;
+use work.util_pack.all;
+
+entity wrbuf is port (
+   clk : in std_logic;
+   rst : in std_logic;
+   a : in cpu_data_o_t;
+   b : in cpu_data_i_t;
+   ya : out cpu_data_i_t;
+   yb : out cpu_data_o_t);
+end wrbuf;
+
+architecture beh of wrbuf is
+
+register variable this : wrbuf_reg_t reset := WRBUF_REG_RESET;
+signal wrbufmem : wrbuf_mem_t := (others => (others => '0'));
+signal ramc : wrbuf_ctrl_t;
+signal empty_s, full_s : std_logic;
+signal rdata : std_logic_vector(68 downto 0);
+
+begin
+   wrbuf_proc : process(a,b,this_r,this_c,rdata)
+   register this when clk='1' and clk'event reset when rst='1';
+   variable empty, full : std_logic;
+   variable ram_ctrl : wrbuf_ctrl_t;
+   begin
+
+   ram_ctrl := ('0', (others=>'0'), 0);
+
+   -- Empty/full
+      if this.waddr = this.raddr then empty := '1';
+      else empty := '0'; end if;
+
+      if this.waddr(WRBUF_ADDR_WIDTH_C) /= this.raddr(WRBUF_ADDR_WIDTH_C) and
+         this.waddr(WRBUF_ADDR_WIDTH_C-1 downto 0) = this.raddr(WRBUF_ADDR_WIDTH_C-1 downto 0) then
+         full := '1';
+      else full := '0'; end if;
+
+   -- Push command to FIFO
+      if a.en = '1' and this.ack = '0' and full = '0' and this.stall = '0' then
+         ram_ctrl.wen := '1';
+         if a.wr = '1' then
+            ram_ctrl.wdata := a.d & a.we & a.a & a.wr;
+         else
+            ram_ctrl.wdata := x"00000000" & x"0" & a.a & a.wr;
+         end if;
+         ram_ctrl.waddr := v2i_fcn(this.waddr(WRBUF_ADDR_WIDTH_C-1 downto 0));
+      end if;
+
+   -- increment buffer write pointer
+      if a.en = '1' and this.ack = '0' and full = '0' and this.stall = '0' then
+         if v2i_fcn(this.waddr) = (2*WRBUF_MEM_DEPTH_C - 1) then
+            this.waddr := (others => '0');
+         else
+            this.waddr := i2v_fcn(to_integer(unsigned(this.waddr) + 1),WRBUF_ADDR_WIDTH_C+1);
+         end if;
+         this.ack := '1';
+      else
+         this.ack := '0';
+      end if;
+
+   -- increment buffer read pointer
+      if b.ack = '1' and empty = '0' then
+         if v2i_fcn(this.raddr) = (2*WRBUF_MEM_DEPTH_C - 1) then
+            this.raddr := (others => '0');
+         else
+            this.raddr := i2v_fcn(to_integer(unsigned(this.raddr) + 1),WRBUF_ADDR_WIDTH_C+1);
+         end if;
+      end if;
+
+   -- ack
+      if a.en = '1' and a.wr = '1' and this.wack = '0' and full = '0' then
+         this.wack := '1';
+      else
+         this.wack := '0';
+      end if;
+
+      if this.stall = '1' and (this_c.rw = '0' or this_r.rw = '0') and b.ack = '1' then
+         this.rack := '1';
+      else
+         this.rack := '0';
+      end if;
+
+   -- Stall
+      if b.ack = '1' and (this_c.rw = '0' or this_r.rw = '0') then
+         this.stall := '0';
+      elsif a.en = '1' and a.rd = '1' and full = '0' then
+         this.stall := '1';
+      end if;
+
+      this.rw := rdata(0);
+
+      this.empty := empty;
+      ramc <= ram_ctrl;
+
+      empty_s <= empty;
+      full_s <= full;
+   end process;
+
+   ram0 : process(clk)
+   begin
+      if clk = '1' and clk'event then
+         if ramc.wen = '1' then wrbufmem(ramc.waddr) <= ramc.wdata; end if;
+      end if;
+   end process;
+
+   rdata <= wrbufmem(v2i_fcn(this_r.raddr(WRBUF_ADDR_WIDTH_C-1 downto 0)));
+   -- assign the output
+   ya.ack <= this_c.rack or this_r.wack;
+   ya.d <= b.d;
+   yb.en <= not this_c.empty;
+   yb.wr <= rdata(0);
+   yb.rd <= not rdata(0);
+   yb.a <= rdata(32 downto 1);
+   yb.we <= rdata(36 downto 33);
+   yb.d <= rdata(68 downto 37);
+
+end beh;

@@ -1,0 +1,118 @@
+Overview
+--------
+
+Source Release of J-Core J2 CPU and associated platform hardware.
+
+This package generates the top level RTL from the pin list and a set
+of RTL source repositories.
+
+lib/
+Contains the VHDL library package reposotories which the chip depends on.
+
+components/
+The logic block repositories that the chip is built from
+
+targets/boards/
+Board-specific files containing Makefiles, contraint files, design descriptions and generated VHDL.
+
+targets/soc_gen/
+Tool for generating top-level VHDL for boards from design descriptions.
+
+tests/
+Simulation test benches for blocks, sets of blocks, subsystems and full chip
+
+tools/
+RTL and SoC generation tools.
+
+
+Tests
+-----
+
+Running "make" or "make check" builds and run some tests. Currently
+these tests are gathered and run from various subrepos and there are
+no top-level tests. Eventually the tests/ directory will contain
+integration tests of multiple parts of the soc.
+
+Here is some example output:
+
+  Running all tests listed in TESTS.  If any tests fail, run the failing
+  test program with runtests -o to see more details.
+
+  components/cpu/tests/register_tap................ok
+  components/cpu/tests/mult_tap....................ok
+  components/cpu/tests/divider_tap.................ok
+  components/cpu/tests/bshift_tap..................ok
+  components/cpu/tests/arith_tap...................ok
+  components/cpu/tests/logic_tap...................ok
+  components/cpu/tests/manip_tap...................ok
+  components/misc/tests/gpio_tap...................ok
+  components/misc/tests/multi_master_bus_mux_tap...ok
+  components/ring_bus/word_tap.....................ok
+  components/ring_bus/node_tap.....................ok
+  components/ring_bus/data_bus_adapter_tap.........ok
+  components/ring_bus/rbus_data_master_tap.........ok
+
+  All tests successful.
+  Files=13,  Tests=392,  0.03 seconds (0.02 usr + 0.01 sys = 0.03 CPU)
+
+Building
+--------
+
+The top-level Makefile has targets for each module/mother board
+combination. To build a bitstream of SoC Module 1v1 for the EVB 2v0
+board run
+
+  soc_top$ make microboard
+
+The output of the build is placed in a newly created directory under
+output/. The name of the directory contains the current date and time.
+A symbolic link named "last_output" directory that points to the new
+output directory is also created.
+
+For example, it might create a directory called
+
+  soc_top/output/2015-02-15_21-44-19_microboard
+
+and there will be a symbolic link pointing to the above directory called
+
+  soc_top$ ls -l last_output
+  lrwxrwxrwx 1 geoff geoff 42 Feb  15 21:44 last_output -> output/2015-02-15_21-44-19_microboard
+
+
+soc_gen
+-------
+
+The Makefile targets like "microboard" come from directory names in targets/boards
+
+$ ls targets/boards
+common_device_classes.edn	microboard			mimas_v2
+
+Each of these directories contains the board-specific files including
+a Makefile, constraints file, generated VHDL files and a design.edn
+file. The design.edn file is one of the inputs to the soc_gen tool
+which generates the VHDL files.
+
+To run soc_gen, and regenerated the VHDL files in one of the
+targets/boards/microboard directory run
+
+  soc_top$ make microboard TARGET=soc_gen
+
+However, to run the above command you'll need to do one of two things:
+
+1) Install a JDK and the tool leiningen (http://leiningen.org/).
+leiningen exists in many linux distributions software repos, but is
+often an old 1.x version. You will have better luck copying the lein
+file from the webpage and putting it in your user's ~/bin directory
+and ensuring that directory is in your PATH.
+
+2) or get the soc_gen.jar file and place it in your soc_top directory.
+With this file, you will only need a JRE installed. You likely already
+have a JRE. Try running "java" to see you have java installed.
+
+If you have the JDK and lein installed and want to create soc_gen.jar,
+cd to the targets/soc_gen directory and run
+
+  soc_top/targets/soc_gen$ ./create_jar.sh
+
+and it will create soc_gen.jar in that directory. The soc_top Makefile
+won't use the jar file unless it's placed in soc_top/.

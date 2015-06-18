@@ -1,0 +1,13 @@
+$(VHDLS) += misc_pkg.vhd
+$(VHDLS) += gpio_pkg.vhd
+$(VHDLS) += gpio.vhd
+$(VHDLS) += pio.vhd
+$(VHDLS) += spi.vhd
+$(VHDLS) += aic.vhd
+$(VHDLS) += aic_edgedet.vhd
+$(VHDLS) += bus_mux_pkg.vhd
+$(VHDLS) += multi_master_bus_mux.vhd
+$(VHDLS) += bus_mux_lock_pkg.vhd
+$(VHDLS) += multi_master_bus_muxlock.vhd
+$(VHDLS) += bus_mux_ff_pkg.vhd
+$(VHDLS) += multi_master_bus_muxff.vhd

@@ -1,0 +1,244 @@
+-- c_addr_width can be either 13 or 14 for now
+-- When c_addr_width is 13 means 16 KB SRAM is defined
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.std_logic_unsigned.all;
+use work.cpu2j0_pack.all;
+
+library unisim;
+use unisim.vcomponents.all;
+
+entity memory_fpga is 
+	generic (c_addr_width : integer range 13 to 14 := 14);
+	port (
+		clk : in std_logic;
+		ibus_i : in cpu_instruction_o_t;
+		ibus_o : out cpu_instruction_i_t;
+	-- databus interface
+		db_i : in cpu_data_o_t;
+		db_o : out cpu_data_i_t
+	);
+end;
+
+-- This implement use falling_edge for all operation
+-- just support 14 only for now
+architecture struc of memory_fpga is 
+	signal iclk, gnd : std_logic;
+	signal gndg : std_logic_vector(0 downto 0);
+	signal gndv : std_logic_vector(7 downto 0);
+	signal r0oa, r1oa, r2oa, r3oa : std_logic_vector(31 downto 0);
+	signal r0ob, r1ob, r2ob, r3ob, r4ob, r5ob, r6ob, r7ob : std_logic_vector(15 downto 0);
+	signal ssra, ssra14: std_logic_vector(3 downto 0);
+	signal ssrb, ssrb11, ssrb10, ssrb01 : std_logic_vector(7 downto 0);
+	signal rwe : std_logic_vector(15 downto 0);
+	signal reg1, reg2, ieg1, ieg2 : std_logic := '0';
+	signal icount, dcount : integer range 0 to 8 := 0;
+	signal iflag, dflag : std_logic := '0';
+	constant c_buses_test : integer := 0;
+begin
+	iclk <= not clk;
+	gnd <= '0';
+	gndv <= (others => '0');
+	gndg(0) <= '0';
+
+gen_normal : if c_buses_test = 0 generate
+	ibus_o.ack <= ibus_i.en;
+	db_o.ack <= db_i.en;
+end generate;
+
+gen_testbus : if c_buses_test = 1 generate
+	-- NOTE: The following is test only
+	ibus_o.ack <= ibus_i.en and ieg2;
+	process(clk) 
+	begin
+		if rising_edge(clk) then
+			if icount = 6 then
+				icount <= 0;
+				iflag <= '0';
+			else
+				icount <= icount + 1;
+				iflag <= '1';
+			end if;
+			if dcount = 7 then
+				dcount <= 0;
+				dflag <= '0';
+			else
+				dcount <= dcount + 1;
+				dflag <= '1';
+			end if;
+		end if;
+	end process;
+	process(clk, ibus_i.en)
+	begin
+		if ibus_i.en = '0' then
+			ieg1 <= '0';
+			ieg2 <= '0';
+		elsif rising_edge(clk) then
+			ieg1 <= ibus_i.en;
+			if iflag = '1' then
+				ieg2 <= ieg1;
+			end if;
+		end if;
+	end process;
+	process(clk, db_i.en)
+	begin
+		if db_i.en = '0' then
+			reg1 <= '0';
+			reg2 <= '0';
+		elsif rising_edge(clk) then
+			reg1 <= db_i.en;
+			if dflag = '1' then
+				reg2 <= reg1;
+			end if;
+		end if;
+	end process;
+	db_o.ack <= db_i.en and reg2;
+	-- End of test
+end generate;
+	db_o.d <= r0oa or r1oa or r2oa or r3oa;
+	ibus_o.d <= r0ob or r1ob or r2ob or r3ob or r4ob or r5ob or r6ob or r7ob;
+	ssra <= "1111" when db_i.en = '0' else
+		ssra14 when db_i.a(14) = '0' else
+		"0111" when db_i.a(13) = '1' else	-- 11
+		"1011";	-- 10
+	ssra14 <= "1101" when db_i.a(13) = '1' else	-- 01
+		  "1110";	-- 00
+	ssrb <= (others => '1') when ibus_i.en = '0' else
+		ssrb11 when ibus_i.a(14 downto 13) = "11" else
+		ssrb10 when ibus_i.a(14 downto 13) = "10" else
+		ssrb01 when ibus_i.a(14 downto 13) = "01" else
+		x"FD" when ibus_i.a(1) = '1' else
+		x"FE";
+	ssrb01 <= x"F7" when ibus_i.a(1) = '1' else
+		  x"FB";
+	ssrb10 <= x"DF" when ibus_i.a(1) = '1' else
+		  x"EF";
+	ssrb11 <= x"7F" when ibus_i.a(1) = '1' else
+		  x"BF";
+	rwe(3 downto 0) <= "0000" when ssra(0) = '1' else
+		"0000" when db_i.wr = '0' else
+		db_i.we;
+	rwe(7 downto 4) <= "0000" when ssra(1) = '1' else
+		"0000" when db_i.wr = '0' else
+		db_i.we;
+	rwe(11 downto 8) <= "0000" when ssra(2) = '1' else
+		"0000" when db_i.wr = '0' else
+		db_i.we;
+	rwe(15 downto 12) <= "0000" when ssra(3) = '1' else
+		"0000" when db_i.wr = '0' else
+		db_i.we;
+
+	RAM0HH : RAMB16_S9_S9
+		generic map( INIT_A => X"000", INIT_B => X"000", SRVAL_A => x"000", SRVAL_B => x"000",
+			WRITE_MODE_A => "READ_FIRST", WRITE_MODE_B => "READ_FIRST", SIM_COLLISION_CHECK => "NONE")
+		port map (DOA => r0oa(31 downto 24), DOB => r0ob(15 downto 8), DOPA => open, DOPB => open, 
+			  ADDRA => db_i.a(12 downto 2), ADDRB =>ibus_i.a(12 downto 2), CLKA => iclk, CLKB => iclk, 
+			  DIA => db_i.d(31 downto 24), DIB => gndv, DIPA => gndg, DIPB => gndg, 
+			  ENA => db_i.en, ENB => ibus_i.en, SSRA => ssra(0), SSRB => ssrb(0), WEA => rwe(3), WEB => gnd);
+	RAM0HL : RAMB16_S9_S9
+		generic map( INIT_A => X"000", INIT_B => X"000", SRVAL_A => x"000", SRVAL_B => x"000",
+			WRITE_MODE_A => "READ_FIRST", WRITE_MODE_B => "READ_FIRST", SIM_COLLISION_CHECK => "NONE")
+		port map (DOA => r0oa(23 downto 16), DOB => r0ob(7 downto 0), DOPA => open, DOPB => open, 
+			  ADDRA => db_i.a(12 downto 2), ADDRB =>ibus_i.a(12 downto 2), CLKA => iclk, CLKB => iclk, 
+			  DIA => db_i.d(23 downto 16), DIB => gndv, DIPA => gndg, DIPB => gndg, 
+			  ENA => db_i.en, ENB => ibus_i.en, SSRA => ssra(0), SSRB => ssrb(0), WEA => rwe(2), WEB => gnd);
+	RAM0LH : RAMB16_S9_S9
+		generic map( INIT_A => X"000", INIT_B => X"000", SRVAL_A => x"000", SRVAL_B => x"000",
+			WRITE_MODE_A => "READ_FIRST", WRITE_MODE_B => "READ_FIRST", SIM_COLLISION_CHECK => "NONE")
+		port map (DOA => r0oa(15 downto 8), DOB => r1ob(15 downto 8), DOPA => open, DOPB => open, 
+			  ADDRA => db_i.a(12 downto 2), ADDRB =>ibus_i.a(12 downto 2), CLKA => iclk, CLKB => iclk, 
+			  DIA => db_i.d(15 downto 8), DIB => gndv, DIPA => gndg, DIPB => gndg, 
+			  ENA => db_i.en, ENB => ibus_i.en, SSRA => ssra(0), SSRB => ssrb(1), WEA => rwe(1), WEB => gnd);
+	RAM0LL : RAMB16_S9_S9
+		generic map( INIT_A => X"000", INIT_B => X"000", SRVAL_A => x"000", SRVAL_B => x"000",
+			WRITE_MODE_A => "READ_FIRST", WRITE_MODE_B => "READ_FIRST", SIM_COLLISION_CHECK => "NONE")
+		port map (DOA => r0oa(7 downto 0), DOB => r1ob(7 downto 0), DOPA => open, DOPB => open, 
+			  ADDRA => db_i.a(12 downto 2), ADDRB =>ibus_i.a(12 downto 2), CLKA => iclk, CLKB => iclk, 
+			  DIA => db_i.d(7 downto 0), DIB => gndv, DIPA => gndg, DIPB => gndg, 
+			  ENA => db_i.en, ENB => ibus_i.en, SSRA => ssra(0), SSRB => ssrb(1), WEA => rwe(0), WEB => gnd);
+	RAM1HH : RAMB16_S9_S9
+		generic map( INIT_A => X"000", INIT_B => X"000", SRVAL_A => x"000", SRVAL_B => x"000",
+			WRITE_MODE_A => "READ_FIRST", WRITE_MODE_B => "READ_FIRST", SIM_COLLISION_CHECK => "NONE")
+		port map (DOA => r1oa(31 downto 24), DOB => r2ob(15 downto 8), DOPA => open, DOPB => open, 
+			  ADDRA => db_i.a(12 downto 2), ADDRB =>ibus_i.a(12 downto 2), CLKA => iclk, CLKB => iclk, 
+			  DIA => db_i.d(31 downto 24), DIB => gndv, DIPA => gndg, DIPB => gndg, 
+			  ENA => db_i.en, ENB => ibus_i.en, SSRA => ssra(1), SSRB => ssrb(2), WEA => rwe(7), WEB => gnd);
+	RAM1HL : RAMB16_S9_S9
+		generic map( INIT_A => X"000", INIT_B => X"000", SRVAL_A => x"000", SRVAL_B => x"000",
+			WRITE_MODE_A => "READ_FIRST", WRITE_MODE_B => "READ_FIRST", SIM_COLLISION_CHECK => "NONE")
+		port map (DOA => r1oa(23 downto 16), DOB => r2ob(7 downto 0), DOPA => open, DOPB => open, 
+			  ADDRA => db_i.a(12 downto 2), ADDRB =>ibus_i.a(12 downto 2), CLKA => iclk, CLKB => iclk, 
+			  DIA => db_i.d(23 downto 16), DIB => gndv, DIPA => gndg, DIPB => gndg, 
+			  ENA => db_i.en, ENB => ibus_i.en, SSRA => ssra(1), SSRB => ssrb(2), WEA => rwe(6), WEB => gnd);
+	RAM1LH : RAMB16_S9_S9
+		generic map( INIT_A => X"000", INIT_B => X"000", SRVAL_A => x"000", SRVAL_B => x"000",
+			WRITE_MODE_A => "READ_FIRST", WRITE_MODE_B => "READ_FIRST", SIM_COLLISION_CHECK => "NONE")
+		port map (DOA => r1oa(15 downto 8), DOB => r3ob(15 downto 8), DOPA => open, DOPB => open, 
+			  ADDRA => db_i.a(12 downto 2), ADDRB =>ibus_i.a(12 downto 2), CLKA => iclk, CLKB => iclk, 
+			  DIA => db_i.d(15 downto 8), DIB => gndv, DIPA => gndg, DIPB => gndg, 
+			  ENA => db_i.en, ENB => ibus_i.en, SSRA => ssra(1), SSRB => ssrb(3), WEA => rwe(5), WEB => gnd);
+	RAM1LL : RAMB16_S9_S9
+		generic map( INIT_A => X"000", INIT_B => X"000", SRVAL_A => x"000", SRVAL_B => x"000",
+			WRITE_MODE_A => "READ_FIRST", WRITE_MODE_B => "READ_FIRST", SIM_COLLISION_CHECK => "NONE")
+		port map (DOA => r1oa(7 downto 0), DOB => r3ob(7 downto 0), DOPA => open, DOPB => open, 
+			  ADDRA => db_i.a(12 downto 2), ADDRB =>ibus_i.a(12 downto 2), CLKA => iclk, CLKB => iclk, 
+			  DIA => db_i.d(7 downto 0), DIB => gndv, DIPA => gndg, DIPB => gndg, 
+			  ENA => db_i.en, ENB => ibus_i.en, SSRA => ssra(1), SSRB => ssrb(3), WEA => rwe(4), WEB => gnd);
+	RAM2HH : RAMB16_S9_S9
+		generic map( INIT_A => X"000", INIT_B => X"000", SRVAL_A => x"000", SRVAL_B => x"000",
+			WRITE_MODE_A => "READ_FIRST", WRITE_MODE_B => "READ_FIRST", SIM_COLLISION_CHECK => "NONE")
+		port map (DOA => r2oa(31 downto 24), DOB => r4ob(15 downto 8), DOPA => open, DOPB => open, 
+			  ADDRA => db_i.a(12 downto 2), ADDRB =>ibus_i.a(12 downto 2), CLKA => iclk, CLKB => iclk, 
+			  DIA => db_i.d(31 downto 24), DIB => gndv, DIPA => gndg, DIPB => gndg, 
+			  ENA => db_i.en, ENB => ibus_i.en, SSRA => ssra(2), SSRB => ssrb(4), WEA => rwe(11), WEB => gnd);
+	RAM2HL : RAMB16_S9_S9
+		generic map( INIT_A => X"000", INIT_B => X"000", SRVAL_A => x"000", SRVAL_B => x"000",
+			WRITE_MODE_A => "READ_FIRST", WRITE_MODE_B => "READ_FIRST", SIM_COLLISION_CHECK => "NONE")
+		port map (DOA => r2oa(23 downto 16), DOB => r4ob(7 downto 0), DOPA => open, DOPB => open, 
+			  ADDRA => db_i.a(12 downto 2), ADDRB =>ibus_i.a(12 downto 2), CLKA => iclk, CLKB => iclk, 
+			  DIA => db_i.d(23 downto 16), DIB => gndv, DIPA => gndg, DIPB => gndg, 
+			  ENA => db_i.en, ENB => ibus_i.en, SSRA => ssra(2), SSRB => ssrb(4), WEA => rwe(10), WEB => gnd);
+	RAM2LH : RAMB16_S9_S9
+		generic map( INIT_A => X"000", INIT_B => X"000", SRVAL_A => x"000", SRVAL_B => x"000",
+			WRITE_MODE_A => "READ_FIRST", WRITE_MODE_B => "READ_FIRST", SIM_COLLISION_CHECK => "NONE")
+		port map (DOA => r2oa(15 downto 8), DOB => r5ob(15 downto 8), DOPA => open, DOPB => open, 
+			  ADDRA => db_i.a(12 downto 2), ADDRB =>ibus_i.a(12 downto 2), CLKA => iclk, CLKB => iclk, 
+			  DIA => db_i.d(15 downto 8), DIB => gndv, DIPA => gndg, DIPB => gndg, 
+			  ENA => db_i.en, ENB => ibus_i.en, SSRA => ssra(2), SSRB => ssrb(5), WEA => rwe(9), WEB => gnd);
+	RAM2LL : RAMB16_S9_S9
+		generic map( INIT_A => X"000", INIT_B => X"000", SRVAL_A => x"000", SRVAL_B => x"000",
+			WRITE_MODE_A => "READ_FIRST", WRITE_MODE_B => "READ_FIRST", SIM_COLLISION_CHECK => "NONE")
+		port map (DOA => r2oa(7 downto 0), DOB => r5ob(7 downto 0), DOPA => open, DOPB => open, 
+			  ADDRA => db_i.a(12 downto 2), ADDRB =>ibus_i.a(12 downto 2), CLKA => iclk, CLKB => iclk, 
+			  DIA => db_i.d(7 downto 0), DIB => gndv, DIPA => gndg, DIPB => gndg, 
+			  ENA => db_i.en, ENB => ibus_i.en, SSRA => ssra(2), SSRB => ssrb(5), WEA => rwe(8), WEB => gnd);
+	RAM3HH : RAMB16_S9_S9
+		generic map( INIT_A => X"000", INIT_B => X"000", SRVAL_A => x"000", SRVAL_B => x"000",
+			WRITE_MODE_A => "READ_FIRST", WRITE_MODE_B => "READ_FIRST", SIM_COLLISION_CHECK => "NONE")
+		port map (DOA => r3oa(31 downto 24), DOB => r6ob(15 downto 8), DOPA => open, DOPB => open, 
+			  ADDRA => db_i.a(12 downto 2), ADDRB =>ibus_i.a(12 downto 2), CLKA => iclk, CLKB => iclk, 
+			  DIA => db_i.d(31 downto 24), DIB => gndv, DIPA => gndg, DIPB => gndg, 
+			  ENA => db_i.en, ENB => ibus_i.en, SSRA => ssra(3), SSRB => ssrb(6), WEA => rwe(15), WEB => gnd);
+	RAM3HL : RAMB16_S9_S9
+		generic map( INIT_A => X"000", INIT_B => X"000", SRVAL_A => x"000", SRVAL_B => x"000",
+			WRITE_MODE_A => "READ_FIRST", WRITE_MODE_B => "READ_FIRST", SIM_COLLISION_CHECK => "NONE")
+		port map (DOA => r3oa(23 downto 16), DOB => r6ob(7 downto 0), DOPA => open, DOPB => open, 
+			  ADDRA => db_i.a(12 downto 2), ADDRB =>ibus_i.a(12 downto 2), CLKA => iclk, CLKB => iclk, 
+			  DIA => db_i.d(23 downto 16), DIB => gndv, DIPA => gndg, DIPB => gndg, 
+			  ENA => db_i.en, ENB => ibus_i.en, SSRA => ssra(3), SSRB => ssrb(6), WEA => rwe(14), WEB => gnd);
+	RAM3LH : RAMB16_S9_S9
+		generic map( INIT_A => X"000", INIT_B => X"000", SRVAL_A => x"000", SRVAL_B => x"000",
+			WRITE_MODE_A => "READ_FIRST", WRITE_MODE_B => "READ_FIRST", SIM_COLLISION_CHECK => "NONE")
+		port map (DOA => r3oa(15 downto 8), DOB => r7ob(15 downto 8), DOPA => open, DOPB => open, 
+			  ADDRA => db_i.a(12 downto 2), ADDRB =>ibus_i.a(12 downto 2), CLKA => iclk, CLKB => iclk, 
+			  DIA => db_i.d(15 downto 8), DIB => gndv, DIPA => gndg, DIPB => gndg, 
+			  ENA => db_i.en, ENB => ibus_i.en, SSRA => ssra(3), SSRB => ssrb(7), WEA => rwe(13), WEB => gnd);
+	RAM3LL : RAMB16_S9_S9
+		generic map( INIT_A => X"000", INIT_B => X"000", SRVAL_A => x"000", SRVAL_B => x"000",
+			WRITE_MODE_A => "READ_FIRST", WRITE_MODE_B => "READ_FIRST", SIM_COLLISION_CHECK => "NONE")
+		port map (DOA => r3oa(7 downto 0), DOB => r7ob(7 downto 0), DOPA => open, DOPB => open, 
+			  ADDRA => db_i.a(12 downto 2), ADDRB =>ibus_i.a(12 downto 2), CLKA => iclk, CLKB => iclk, 
+			  DIA => db_i.d(7 downto 0), DIB => gndv, DIPA => gndg, DIPB => gndg, 
+			  ENA => db_i.en, ENB => ibus_i.en, SSRA => ssra(3), SSRB => ssrb(7), WEA => rwe(12), WEB => gnd);
+end architecture struc;

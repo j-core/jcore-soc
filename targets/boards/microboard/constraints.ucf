@@ -1,0 +1,61 @@
+############################################################################
+# VCC AUX VOLTAGE 
+############################################################################
+CONFIG VCCAUX=3.3;
+
+############################################################################
+
+#NET PIN_USER_RESET      TIG;
+#NET PIN_ETH_RESET_N     TIG;
+
+NET PIN_CLOCK_Y3 TNM_NET = CLOCK_Y3;
+TIMESPEC TS_CLOCK_Y3 = PERIOD CLOCK_Y3 100 MHz;
+
+#32ns period for 31.25MHz
+NET "clk_sys" TNM_NET = clk_31_31;
+TIMESPEC TS_CLOCK_31 = PERIOD clk_31_31 31.25 MHz;
+
+#31M 90 phase
+NET "clk_sys_90" TNM_NET = clk_31_90;
+TIMESPEC TS_CLOCK_31_90 = PERIOD clk_31_90 TS_CLOCK_31/1 PHASE + 8 ns;
+
+#62M
+NET "clk_sys2x" TNM_NET = clk_62_62;
+TIMESPEC TS_CLOCK_62 = PERIOD clk_62_62 62.5 MHz;
+
+TIMEGRP "dqs_pads"=PADS("PIN_LPDDR_?DQS");
+TIMEGRP "dq_pads"=PADS("PIN_LPDDR_DQ*");
+TIMEGRP "dq_pads" OFFSET = OUT : 31.0 ns AFTER PIN_CLOCK_Y3;
+TIMEGRP "dqs_pads" OFFSET = OUT : 31.0 ns AFTER PIN_CLOCK_Y3;
+
+TIMEGRP "ddr_pads"=PADS("PIN_LPDDR_*");
+TIMEGRP "clk_pads"=PADS("PIN_LPDDR_CK*");
+TIMEGRP "dm_pads"=PADS("PIN_LPDDR_?DM");
+TIMEGRP "ctrl_pads"="ddr_pads" EXCEPT "clk_pads" "dq_pads" "dqs_pads" "dm_pads";
+TIMEGRP "dm_pads" OFFSET = OUT : 31.0 ns AFTER PIN_CLOCK_Y3;
+TIMEGRP "clk_pads" OFFSET = OUT : 31.0 ns AFTER PIN_CLOCK_Y3;
+TIMEGRP "ctrl_pads" OFFSET = OUT : 28.0 ns AFTER PIN_CLOCK_Y3;
+TIMEGRP "dq_pads" OFFSET = IN : 0.1 ns VALID 16.0 ns BEFORE PIN_CLOCK_Y3 RISING;
+TIMEGRP "dq_pads" OFFSET = IN : 0.1 ns VALID 16.0 ns BEFORE PIN_CLOCK_Y3 FALLING;
+
+TIMEGRP "other_pads"=PADS EXCEPT "ddr_pads";
+#YK, WHY? which interface has this requirements?
+TIMEGRP "other_pads" OFFSET = IN : 7.50 VALID 19.0 BEFORE PIN_CLOCK_Y3;
+TIMEGRP "other_pads" OFFSET = OUT : 23.0 AFTER PIN_CLOCK_Y3;
+
+#YK, WHY?
+PIN "pll_250/clkout6_buf.O" CLOCK_DEDICATED_ROUTE = FALSE;
+
+############################################################################	
+# Micron MT46H32M16LFBF-5 LPDDR			
+############################################################################	
+CONFIG MCB_PERFORMANCE= STANDARD;
+
+############################################################################	
+# All the IO resources in an IO tile which contains DQSP/UDQSP are used		
+# irrespective of a single-ended or differential DQS design. Any signal that	
+# is connected to the free pin of the same IO tile in a single-ended design	
+# will be unrouted. Hence, the IOB cannot used as general pupose IO.			
+############################################################################	
+CONFIG PROHIBIT = P1,L3;
+

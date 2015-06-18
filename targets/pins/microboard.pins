@@ -1,0 +1,167 @@
+############################################################################
+#
+# FPGA pin assignments for the Microboard
+#
+############################################################################
+
+############################################################################
+# User Reset Push Button
+############################################################################
+
+user_reset V4
+
+############################################################################
+# Micron N25Q128 SPI Flash
+#   This is a Multi-I/O Flash.  Several pins have dual purposes
+#   depending on the mode.
+############################################################################
+
+spi_clk R15
+spi_cs V3
+spi_mosi T13
+spi_miso R13
+
+# there are more spi pins not included here. See old
+# constraints/microboard/base.ucf
+
+############################################################################
+# Texas Instruments CDCE913 Triple-Output PLL Clock Chip
+#   Y1: 33.333 MHz, USER_CLOCK can be used as external configuration clock
+#   Y2: 50.00 MHz
+#   Y3: 100 MHz 
+############################################################################
+
+user_clock V10
+clock_y2 K15
+clock_y3 C10
+
+############################################################################
+# User LEDs			
+############################################################################
+
+led1 P4
+led2 L6
+led3 F5
+led4 C2
+
+############################################################################
+# Silicon Labs CP2102 USB-to-UART Bridge Chip
+############################################################################
+
+rxd R7
+txd T7
+
+############################################################################
+# Texas Instruments CDCE913 programming port
+############################################################################
+
+scl P12
+sda U13
+
+############################################################################
+# Micron MT46H32M16LFBF-5 LPDDR			
+############################################################################
+
+# Address
+lpddr_a0 J7
+lpddr_a1 J6
+lpddr_a2 H5
+lpddr_a3 L7
+lpddr_a4 F3
+lpddr_a5 H4
+lpddr_a6 H3
+lpddr_a7 H6
+lpddr_a8 D2
+lpddr_a9 D1
+lpddr_a10 F4
+lpddr_a11 D3
+lpddr_a12 G6
+lpddr_ba0 F2
+lpddr_ba1 F1
+# Data
+lpddr_dq0 L2
+lpddr_dq1 L1
+lpddr_dq2 K2
+lpddr_dq3 K1
+lpddr_dq4 H2
+lpddr_dq5 H1
+lpddr_dq6 J3
+lpddr_dq7 J1
+lpddr_dq8 M3
+lpddr_dq9 M1
+lpddr_dq10 N2
+lpddr_dq11 N1
+lpddr_dq12 T2
+lpddr_dq13 T1
+lpddr_dq14 U2
+lpddr_dq15 U1
+lpddr_ldm K3
+lpddr_udm K4
+lpddr_ldqs L4
+lpddr_udqs P2
+# Clock
+lpddr_ck_n G1
+lpddr_ck_p G3
+lpddr_cke H7
+# Control
+lpddr_cas K5
+lpddr_ras L5
+lpddr_we E3
+
+############################################################################
+# National Semiconductor DP83848J 10/100 Ethernet PHY			
+#   Pull-ups on RXD are necessary to set the PHY AD to 11110b.
+#   Must keep the PHY from defaulting to PHY AD = 00000b      
+#   because this is Isolate Mode                              
+############################################################################
+
+eth_col M18
+eth_crs N17
+eth_mdc M16
+eth_mdio L18
+eth_reset_n T18
+eth_rx_clk L15
+eth_rx_d0 T17
+eth_rx_d1 N16
+eth_rx_d2 N15
+eth_rx_d3 P18
+eth_rx_dv P17
+eth_rx_er N18
+eth_tx_clk H17
+eth_tx_d0 K18
+eth_tx_d1 K17
+eth_tx_d2 J18
+eth_tx_d3 J16
+eth_tx_en L17
+
+############################################################################
+# Peripheral Modules and GPIO
+#   Peripheral Modules (PMODs) were invented by Digilent Inc. as small, 
+#   inexpensive add-on boards for FPGA development boards. With costs 
+#   starting as low as $10, PMODs allow you to add a number of capabilities 
+#   to your board, including A/D, D/A, Wireless Radio, SD Card, 2x16 
+#   Character LCD and a variety of LEDs, switches, and headers. See the 
+#   complete library of Digilent PMODs at 
+#     https://www.digilentinc.com/PMODs
+############################################################################
+
+# Connector J5
+pmod1_p1 F15
+pmod1_p2 F16
+pmod1_p3 C17
+pmod1_p4 C18
+pmod1_p7 F14
+pmod1_p8 G14
+pmod1_p9 D17
+pmod1_p10 D18
+
+# Connector J4
+pmod2_p1 H12
+pmod2_p2 G13
+pmod2_p3 E16
+pmod2_p4 E18
+pmod2_p7 K12
+pmod2_p8 K13
+pmod2_p9 F17
+pmod2_p10 F18
+

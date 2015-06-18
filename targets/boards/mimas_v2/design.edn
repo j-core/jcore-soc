@@ -1,0 +1,140 @@
+{:target :spartan6
+ :pins {:file "../pins/mimas_v2.pins"
+        :type :pin-names
+        :rules
+        [
+         ;; Default to LVCMOS33 for all pins and then override for
+         ;; certain pins later
+         {:match ".*" :attrs {:iostandard "LVCMOS33"}}
+
+         {:match "clk_100mhz" :signal true :buff false}
+
+         {:match "uart_tx" :signal "uart_rx"}
+         {:match "uart_rx" :signal "uart_tx" :attrs {:drive 8 :slew "fast"}}
+         {:match "spi_.*" :attrs {:drive 8 :slew "fast"}}
+         ;; never select on board flash
+         {:match "spi_cs" :out 1}
+
+         ;; ddr pins
+         {:match "mcb3_dram_.*" :attrs {:iostandard "MOBILE_DDR"}}
+         ;; addresses
+         {:match ["mcb3_dram_a" n] :signal ["ddr_sd_ctrl.a(" n ")"]}
+         {:match ["mcb3_dram_ba" n] :signal ["ddr_sd_ctrl.ba(" n ")"]}
+         ;; clock
+         {:match "mcb3_dram_ck[_n]?" :attrs {:iostandard "DIFF_MOBILE_DDR"}}
+         {:match "mcb3_dram_ck_n" :signal {:name "ddr_clk" :diff :neg}}
+         {:match "mcb3_dram_ck" :signal {:name "ddr_clk" :diff :pos}}
+         {:match "mcb3_dram_cke" :signal "ddr_sd_ctrl.cke"}
+         ;; control
+         {:match "mcb3_dram_cas_n" :signal "ddr_sd_ctrl.cas"}
+         {:match "mcb3_dram_ras_n" :signal "ddr_sd_ctrl.ras"}
+         {:match "mcb3_dram_we_n" :signal "ddr_sd_ctrl.we"}
+         ;; data
+         {:match ["mcb3_dram_dq" n]
+          :in ["dr_data_i.dqi(" n ")"]
+          :out ["dr_data_o.dqo(" n ")"]
+          :out-en ["dr_data_o.dq_outen(" n ")"]}
+         {:match "mcb3_dram_ldm"
+          :out "dr_data_o.dmo(0)"
+          :out-en "dr_data_o.dq_outen(16)"}
+         {:match "mcb3_dram_udm"
+          :out "dr_data_o.dmo(1)"
+          :out-en "dr_data_o.dq_outen(17)"}
+         {:match "mcb3_dram_ldqs"
+          :in "dr_data_i.dqsi(0)"
+          :out "dr_data_o.dqso(0)"
+          :out-en "dr_data_o.dqs_outen(0)"}
+         {:match "mcb3_dram_udqs"
+          :in "dr_data_i.dqsi(1)"
+          :out "dr_data_o.dqso(1)"
+          :out-en "dr_data_o.dqs_outen(1)"}
+
+         {:match ["dpswitch" n] :attrs {:pullup true}}
+         {:match ["switch" n] :attrs {:pullup true}}
+         {:match ["led" n] :attrs {:drive 8 :slew "fast"} :out ["po(" n ")"]}
+
+         {:match "sd_miso" :signal "spi_miso"}
+         {:match "sd_mosi" :signal "spi_mosi" :attrs {:drive 8 :slew "fast"}}
+         {:match "sd_cs" :signal "spi_cs(0)" :attrs {:drive 8 :slew "fast"}}
+         {:match "sd_clk" :signal "spi_clk" :attrs {:drive 8 :slew "fast"}}
+
+         {:match ["sevensegment" n] :attrs {:drive 8 :slew "fast"}}
+         {:match "sevensegment0" :out "po(8)"}
+         {:match "sevensegment1" :out "po(9)"}
+         {:match "sevensegment2" :out "po(10)"}
+         {:match "sevensegment3" :out "po(11)"}
+         {:match "sevensegment4" :out "po(12)"}
+         {:match "sevensegment5" :out "po(13)"}
+         {:match "sevensegment6" :out "po(14)"}
+         {:match "sevensegment7" :out "po(15)"}
+         {:match "sevensegmentenable0" :out "po(16)"}
+         {:match "sevensegmentenable1" :out "po(17)"}
+         {:match "sevensegmentenable2" :out "po(18)"}
+
+         {:match "audio_.*" :attrs {:drive 8 :slew "fast"}}
+         {:match "vga_.*" :attrs {:drive 8 :slew "fast"}}
+
+         {:match ["io_p" n "_" m] :signal ["io_p" n "(" m ")"]
+          :attrs {:drive 8 :slew "fast"}}]}
+
+ ;; Some signals have different names in different blocks. This
+ ;; setting tells the tool which signals are actually the same signal.
+ ;; When entities are parsed, each signal in the list of signals on
+ ;; the right is renamed to the signal on the left
+ :merge-signals
+ {"pll_rst" ["ddr_clkgen_reset_i" "pll_250_reset_o"]
+  "clock_locked" ["ddr_clkgen_locked" "clk_ddr"]
+  "clk_sys" ["clk_sys" "ddr_clkgen_clk0_o" "clk_50_0"]
+  "clk_sys_90" ["ddr_clkgen_clk90_o" "clk_50_90"]
+  "clk_sys2x" ["ddr_clkgen_clk2x_o"]
+  "clk31_todcm" ["pll_250_clk31" "ddr_clkgen_clk_i"]}
+
+ ;; Supply a zero value for a list of global signals that aren't
+ ;; output by devices in the design
+ :zero-signals
+ ["icache0_ctrl"
+  "icache1_ctrl"
+  "cache01sel_ctrl_temp"
+  "dcache_ctrl"
+  "dma_dbus_o"
+  "debug_i"]
+
+ :system
+ {:pio
+  {[0 7] {:name "led"}
+   [8 15] {:name "sevensegment"}
+   [16 31] 0}}
+
+ ;; list entities, other than top, that should be instantiated at the
+ ;; padring level
+ :padring-entities {"pll_250" {:ports {"clk" {:global-signal "clk_100mhz"}}}
+                    "ddr_clkgen" {}
+                    "ddr_iocells" {}
+                    "reset_gen" {}}
+
+ ;; list entities, other that the devices entity, that should be
+ ;; instantiated at the top level
+ :top-entities {"cpus" {:architecture "one_cpu"}
+                "ddr_ram_mux" {:architecture "one_cpu_direct"}
+                "ddr_ctrl" {:generics {"c_data_width" CFG_DDRDQ_WIDTH
+                                       "c_sa_width" CFG_SA_WIDTH
+                                       "c_dll_enable" 2
+                                       "c_period_clkbus" CFG_BUS_PERIOD}}}
+
+ :device-classes
+ {$include "../common_device_classes.edn"}
+ :devices
+ [{:class "gpio"
+   :base-addr 0xabcd0000
+   :irq 4}
+  {:class "spi"
+   :base-addr 0xabcd0040
+   :generics {"c_csnum" 2
+              "fclk" 31.25e6}}
+  {:class "uartlite"
+   :name "uart"
+   :base-addr 0xabcd0100
+   :irq 1
+   :generics {"intcfg" 1
+              "fclk" 31.25e6
+              "bps" 19.2e3}}]}

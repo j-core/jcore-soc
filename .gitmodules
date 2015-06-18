@@ -1,0 +1,6 @@
+[submodule "boot"]
+	path = boot
+	url = ../bootrom
+[submodule "components/cpu"]
+	path = components/cpu
+	url = ../jcore-cpu
