@@ -8,10 +8,54 @@ use ieee.numeric_std.all;
 package util_pack is
 
   component syncff port (
-    clk : in std_logic;
-    reset : in std_logic;
-    sin : in std_logic;
-    sout : out std_logic);
+    clk   : in  std_logic;
+    reset : in  std_logic;
+    sin   : in  std_logic;
+    sout  : out std_logic);
+  end component;
+
+  component ddr_input
+    generic (
+      -- DDR_ALIGNMENT = OPPOSITE_EDGE or SAME_EDGE
+      DDR_ALIGNMENT : string    := "OPPOSITE_EDGE";
+      INIT_Q1       : std_logic := '0';
+      INIT_Q2       : std_logic := '0';
+      -- SRTYPE = ASYNC or SYNC
+      SRTYPE        : string    := "SYNC");
+    port (
+      clk : in  std_logic;
+      rst : in  std_logic;
+      d   : in  std_logic;
+      q1  : out std_logic;
+      q2  : out std_logic);
+  end component;
+
+  component ddr_output is
+    generic (
+      -- DDR_ALIGNMENT = OPPOSITE_EDGE or SAME_EDGE
+      DDR_ALIGNMENT : string    := "OPPOSITE_EDGE";
+      INIT          : std_logic := '0';
+      -- SRTYPE = ASYNC or SYNC
+      SRTYPE        : string    := "SYNC");
+    port (
+      clk : in  std_logic;
+      rst : in  std_logic;
+      d1  : in  std_logic;
+      d2  : in  std_logic;
+      q   : out std_logic);
+  end component;
+
+  component clock_output is
+    port (
+      clk : in  std_logic;
+      rst : in  std_logic;
+      q   : out std_logic);
+  end component;
+
+  component global_buffer is
+    port (
+      i : in  std_logic;
+      o : out std_logic);
   end component;
 
   function log2_fcn (a : in natural) return natural;

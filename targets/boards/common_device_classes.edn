@@ -1,40 +1,210 @@
 {"uartlite"
  {:entity "uartlitedb"
-  :regs [{:name "data"
-          :type :fixed
+  :dt-name "serial"
+  :dt-props {:compatible "xlnx,xps-uartlite-1.00.a"
+             :device_type "serial"}
+  :left-addr-bit 3
+  :regs [{:name "rx"
           :width 1
-          :enum-item "DATA"
           :addr 3}
-         {:name "ctrl"
-          :type :fixed
+         {:name "tx"
           :width 1
-          :enum-item "CTRL"
-          :addr 7}]}
- "uart16550"
- {}
+          :addr 7}
+         {:name "status"
+          :width 1
+          :addr 11}
+         {:name "ctrl"
+          :width 1
+          :addr 15}]
+  :generics {"fclk" CFG_CLK_CPU_FREQ_HZ}}
  "gpio"
  {:desc "General purpose IO"
   :entity "pio"
-  :regs [{:name "value"
-          :type :fixed
-          :width 4}
-         {:name "mask"
-          :type :fixed
-          :width 4}
-         {:name "edge"
-          :type :fixed
-          :width 4}
+  :dt-props {:compatible "jcore,soc-gpio-0.1"
+             :gpio-controller false
+             :#gpio-cells (2)}
+  :left-addr-bit 3
+  :regs [{:name "value"}
+         {:name "mask"}
+         {:name "edge"}
          {:name "changes"
-          :type :fixed
-          :width 4
           :mode :read}]}
+ "gpio2"
+ {:desc "General purpose IO"
+  :entity "gpio2"
+  :left-addr-bit 3
+  :regs [{:name "value"}
+         {:name "in_out"}
+         {:name "toggle"
+          :mode :write}]}
  "spi"
- {:regs [{:name "control"
-          :type :fixed
+ {:entity "spi2"
+  :dt-props {:compatible "jcore,soc-spi-0.1"
+             :#address-cells (1)
+             :#size-cells (1)
+             :status "ok"
+             :spi-max-frequency (12500000)}
+  ;; This lists the connected spi bus slaves, which may not be the same
+  ;; across boards.
+  ;; TODO: How should these be represented?
+  :dt-children [#_["spidev@2"
+                 {:properties
+                  {:compatible "rohm,dh2228fv"
+                   :reg (2)
+                   :mode (0)}}]
+                ["sdcard@1"
+                 {:properties
+                  {:compatible "mmc-spi-slot"
+                   :reg (1)
+                   :spi-max-frequency (12500000)
+                   :voltage-ranges (3200 3400)
+                   :mode (0)}}]
+                #_["m25p80@1"
+                 {:properties
+                  {:compatible "st,m25p80"
+                   :#address-cells (1)
+                   :#size-cells (1)
+                   :spi-max-frequency (1250000)
+                   :reg (1)
+                   :mode (0)
+                   :type "m25p32"}
+                  :children
+                  [["partition@0"
+                    {:properties
+                     {:label "spi_flash"
+                      :reg (0 0) ;; size 0 means full mtd
+                      }}]]}]]
+  :left-addr-bit 2
+  :regs [{:name "ctrl"
           :width 1
           :addr 3}
          {:name "data"
-          :type :fixed
           :width 1
-          :addr 4}]}
-}
+          :addr 7}]
+  :generics {"clk_freq" CFG_CLK_CPU_FREQ_HZ}}
+ "i2c"
+ {:dt-props {:compatible "jcore,soc-i2c-0.1"}
+  :left-addr-bit 4
+  :regs [;; taken from misc/i2cb.vhd
+         {:name "ctrl0"
+          ;; RD: x"000" & ack_to & reg_dly & twi_dat_reg & '0' & irq_enable & '0' & i2c_reset & reg_complete & reg_timeout & w_busy
+          ;; WR: i2c_reset <= db_i.d(3);
+          ;;     reg_start <= db_i.d(4);
+          ;;     irq_enable <= db_i.d(5);
+          ;;     reg_dly <= db_i.d(15 downto 8);
+          ;;     ack_to <= db_i.d(19 downto 16);
+          }
+         {:name "ctrl1"
+          ;; RD: x"00" & wcnt & "000" & x"00" & "000" & xlen
+          ;; WR: xlen <= db_i.d(4 downto 0);
+          }
+         {:name "ctrl2"
+          ;; RD: x"000000" & "0" & twi_nclk & x"0" & speed_sel
+          ;; WR: speed_sel <= db_i.d(1 downto 0);
+          ;;     twi_nclk <= db_i.d(6);
+          }
+         {:name "data"
+          :type :mem
+          :width 20}]}
+ "emac"
+ {:entity "eth_mac_rmii"
+  :configuration "eth_mac_rmii_fpga"
+  :dt-name "ethernet"
+  :dt-props {:compatible "jcore,soc-emac-0.1"}
+  :left-addr-bit 12
+  :regs [;;-- assume block 0 is control;	(A12 = 0, (A11 = 0))
+         {:name "trans_length"}
+         {:name "status"}
+         {:name "mac_lo"
+          :desc "MAC address 31-0"}
+         {:name "mac_hi"
+          :desc "MAC address 47-32"}
+         {:name "debug"
+          :addr 0x10}
+
+         {:name "tstamp_tx_sec_hi"
+          :addr 0x20}
+         {:name "tstamp_tx_sec_lo"}
+         {:name "tstamp_tx_nsec"}
+
+         {:name "tstamp_rx_sec_hi"
+          :addr 0x30}
+         {:name "tstamp_rx_sec_lo"}
+
+         ;;-- Block 2 is receive buffer (A12 = 1, A11 = 0)
+         {:name "rx_buffer"
+          :type :mem
+          ;; underlying memory is actually 8192 bytes, but split into pages
+          ;; that are used in round robin
+          :width 2048
+          :addr 0x1000}
+         ;;-- Block 3 is Transmit buffer (A12 = 1, A11 = 1)
+         {:name "tx_buffer"
+          :type :mem
+          :width 2048
+          :addr 0x1800}]}
+ "cache_ctrl"
+ {:entity "icache_modereg"
+  :dt-name "cache-controller"
+  :dt-props {:compatible "jcore,soc-cache-0.1"
+             :cpu-offset (4)}
+  :left-addr-bit 5
+  :regs [{:name "ctrl0"}
+         {:name "ctrl1"}
+         {:name "temp_cpu0_instr_addr"
+          :addr 0x30}
+         {:name "temp_cpu1_instr_addr"}
+         {:name "sel_ctrl_temp"
+          :addr 0x3c}]}
+ "aic"
+ {:entity "aic"
+  :dt-name "interrupt-controller"
+  :dt-props {:compatible "jcore,j2-soc-aic-0.1"
+             :interrupt-controller false
+             :#interrupt-cells (1)}
+  :left-addr-bit 5
+  :regs [{:name "ctrl0"}
+         {:name "brkadd"}
+         {:name "ilevels"}
+         {:name "ctrl1"}
+         {:name "pit_throttle"}
+         {:name "pit_counter"}
+         {:name "clock_period"
+          :mode :read}
+         {:name "rtc_sec_hi"
+          :addr 0x20}
+         {:name "rtc_sec_lo"}
+         {:name "rtc_nsec"}]
+  :ports {"clk_bus" "clk_sys"
+          "rst_i" "reset"
+          "irq_i" {:irq? true}}}
+ "aic2"
+ {:entity "aic2"
+  :dt-name "interrupt-controller"
+  :dt-props {:compatible "jcore,j2-soc-aic-0.2"
+             :interrupt-controller false
+             :#interrupt-cells (1)}
+  :left-addr-bit 5
+  :regs [{:name "ctrl0"}
+         {:name "ctrl1"
+          :addr 0xC}
+         {:name "pit_throttle"}
+         {:name "pit_counter"}
+         {:name "clock_period"
+          :mode :read}
+         {:name "rtc_sec_hi"
+          :addr 0x20}
+         {:name "rtc_sec_lo"}
+         {:name "rtc_nsec"}]
+  :ports {"clk_sys" "clk_sys"
+          "rst_i" "reset"
+          "irq_grp_i" {:irq? true}
+          "irq_s_i" {:irq? true}}
+  :requires ["aic2_tglue"]}
+ "aic2_tglue"
+ {:entity "aic2_tglue"
+  :ports {"clk_sys" "clk_sys"
+          "rst_i" "reset"
+          "irqs" {:irq? true}
+          "irq_o" {:irq? true}}}
+ }

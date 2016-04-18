@@ -1,0 +1,85 @@
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.std_logic_unsigned.all;
+use work.aic2_pack.all;
+
+-- aic2 attached temporary glue.
+-- connect existing five irqs lines then encode to irq_t (one channel)
+-- format.
+
+entity aic2_tglue is
+  generic (
+    NUM_M0 : std_logic_vector(5 downto 0) := b"011100";
+    NUM_M1 : std_logic_vector(5 downto 0) := b"011101";
+    NUM_M2 : std_logic_vector(5 downto 0) := b"011110";
+    NUM_M3 : std_logic_vector(5 downto 0) := b"011111";
+    NUM_M4 : std_logic_vector(5 downto 0) := b"100000");
+  port (
+    clk_sys      : in std_logic;
+    rst_i        : in std_logic;
+    irqs         : in std_logic_vector (4 downto 0); 
+    irq_o        : out irq_t
+  );
+end aic2_tglue;
+
+architecture behav of aic2_tglue is
+  type aic2_state_t is (M0, M1, M2, M3, M4);
+  type aic2_tglue_reg_t is record
+    state        : aic2_state_t;
+    irqs_edgeacc : std_logic_vector (4 downto 0);
+    irqs_del1    : std_logic_vector (4 downto 0);
+    irq_o        : irq_t;
+  end record;
+  constant AIC2_TGLUE_RESET : aic2_tglue_reg_t :=
+    (M0, (others => '0'), (others => '0'), NULL_IRQ);
+
+  register variable this : aic2_tglue_reg_t reset := AIC2_TGLUE_RESET;
+begin
+  p1 : process(this, irqs)
+    register this when clk_sys='1' and clk_sys'event reset when rst_i='1';
+    variable irq_edge : std_logic_vector (4 downto 0);
+    variable nx       : aic2_tglue_reg_t;
+  begin
+    this.irq_o := NULL_IRQ;
+    nx.irqs_edgeacc := this.irqs_edgeacc;
+
+    case this.state is
+    when M0     => if(this.irqs_edgeacc(0) =  '1') then
+                      this.irq_o.en := '1';
+                      this.irq_o.NUM := NUM_M0;
+                        nx.irqs_edgeacc(0) := '0'; end if;
+    when M1     => if(this.irqs_edgeacc(1) =  '1') then
+                      this.irq_o.en := '1';
+                      this.irq_o.NUM := NUM_M1;
+                        nx.irqs_edgeacc(1) := '0'; end if;
+    when M2     => if(this.irqs_edgeacc(2) =  '1') then
+                      this.irq_o.en := '1';
+                      this.irq_o.NUM := NUM_M2;
+                        nx.irqs_edgeacc(2) := '0'; end if;
+    when M3     => if(this.irqs_edgeacc(3) =  '1') then
+                      this.irq_o.en := '1';
+                      this.irq_o.NUM := NUM_M3;
+                        nx.irqs_edgeacc(3) := '0'; end if;
+    when others => if(this.irqs_edgeacc(4) =  '1') then
+                      this.irq_o.en := '1';
+                      this.irq_o.NUM := NUM_M4;
+                        nx.irqs_edgeacc(4) := '0'; end if;
+    end case;
+
+    irq_edge := irqs and (not this.irqs_del1);
+    nx.irqs_edgeacc := nx.irqs_edgeacc or irq_edge;
+
+    case this.state is
+    when M0     => this.state := M1;
+    when M1     => this.state := M2;
+    when M2     => this.state := M3;
+    when M3     => this.state := M4;
+    when others => this.state := M0;
+    end case;
+
+    this.irqs_edgeacc := nx.irqs_edgeacc;
+    this.irqs_del1 := irqs;
+  end process;
+  -- output drive
+  irq_o <= this'register.irq_o;
+end behav;

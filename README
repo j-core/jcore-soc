@@ -10,16 +10,25 @@ lib/
 Contains the VHDL library package reposotories which the chip depends on.
 
 components/
-The logic block repositories that the chip is built from
+The logic block repositories that the chip is built from. These
+include large components like the SH CPU, peripheral devices with
+memory-mapped registers like UARTs, and low-level components like
+clock generators.
 
 targets/boards/
-Board-specific files containing Makefiles, contraint files, design descriptions and generated VHDL.
+Board-specific files containing Makefiles, contraint files, design
+descriptions and generated VHDL. The generated VHDL stitches together
+the hand-written VHDL from the components directories to build the SoC
+and connects the external inputs and output lines to pins.
 
 targets/soc_gen/
 Tool for generating top-level VHDL for boards from design descriptions.
 
 tests/
-Simulation test benches for blocks, sets of blocks, subsystems and full chip
+Simulation test benches for blocks, sets of blocks, subsystems and
+full chip. This top-level tests directory isn't used currently.
+Instead different subrepos have their own tests directories. See the
+Tests section below for how to run those.
 
 tools/
 RTL and SoC generation tools.
@@ -28,10 +37,10 @@ RTL and SoC generation tools.
 Tests
 -----
 
-Running "make" or "make check" builds and run some tests. Currently
-these tests are gathered and run from various subrepos and there are
-no top-level tests. Eventually the tests/ directory will contain
-integration tests of multiple parts of the soc.
+Running "make check" builds and run some tests. Currently these tests
+are gathered and run from various subrepos and there are no top-level
+tests. Eventually the tests/ directory will contain integration tests
+of multiple parts of the soc.
 
 Here is some example output:
 
@@ -59,10 +68,9 @@ Building
 --------
 
 The top-level Makefile has targets for each module/mother board
-combination. To build a bitstream of SoC Module 1v1 for the EVB 2v0
-board run
+combination. To build a bitstream for the Numato Mimas v2 board, run:
 
-  soc_top$ make microboard
+  soc_top$ make mimas_v2
 
 The output of the build is placed in a newly created directory under
 output/. The name of the directory contains the current date and time.
@@ -71,33 +79,42 @@ output directory is also created.
 
 For example, it might create a directory called
 
-  soc_top/output/2015-02-15_21-44-19_microboard
+  soc_top/output/2015-02-15_21-44-19_mimas_v2
 
 and there will be a symbolic link pointing to the above directory called
 
   soc_top$ ls -l last_output
-  lrwxrwxrwx 1 geoff geoff 42 Feb  15 21:44 last_output -> output/2015-02-15_21-44-19_microboard
+  lrwxrwxrwx 1 geoff geoff 42 Feb  15 21:44 last_output -> output/2015-02-15_21-44-19_mimas_v2
 
 
 soc_gen
 -------
 
-The Makefile targets like "microboard" come from directory names in targets/boards
-
-$ ls targets/boards
-common_device_classes.edn	microboard			mimas_v2
+The Makefile targets like "mimas_v2" come from directory names in
+targets/boards.
 
 Each of these directories contains the board-specific files including
 a Makefile, constraints file, generated VHDL files and a design.edn
 file. The design.edn file is one of the inputs to the soc_gen tool
-which generates the VHDL files.
+which generates the VHDL files. The file format edn is defined here
+https://github.com/edn-format/edn, but there are no docs about writing
+a design.edn file yet. Refer to the existing ones for examples.
 
 To run soc_gen, and regenerated the VHDL files in one of the
-targets/boards/microboard directory run
+targets/boards/mimas_v2 directory run
 
-  soc_top$ make microboard TARGET=soc_gen
+  soc_top$ make mimas_v2 TARGET=soc_gen
 
-However, to run the above command you'll need to do one of two things:
+Run soc_gen against all boards by running
+
+  soc_top$ make soc_gen
+
+You can also pass a regular expression to select which boards you want
+to run with the BOARDS parameter
+
+  soc_top$ make soc_gen BOARDS="mimas"
+
+However, to run above command you'll need to do one of two things:
 
 1) Install a JDK and the tool leiningen (http://leiningen.org/).
 leiningen exists in many linux distributions software repos, but is

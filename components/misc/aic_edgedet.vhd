@@ -6,6 +6,7 @@ use ieee.std_logic_1164.all;
 entity aic_edgedet is port (
 	q : out std_logic := '0';
 	clk : in std_logic;
+	rst : in std_logic;
 	irq : in std_logic;
 	en_i : in std_logic;
 	clr_i : in std_logic);
@@ -15,9 +16,13 @@ architecture beh of aic_edgedet is
 	signal reg0, reg1 : std_logic := '0';
 	signal w_edge : std_logic := '0';
 begin
-	process(clk) 
+	process(clk, rst)
 	begin
-		if rising_edge(clk) then
+		if rst = '1' then
+			reg0 <= '0';
+			reg1 <= '0';
+			q <= '0';
+		elsif rising_edge(clk) then
 			reg0 <= irq;
 			reg1 <= reg0;
 			if w_edge = '1' then

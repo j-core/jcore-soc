@@ -1,6 +1,9 @@
-$(VHDLS) += clk_pkg.vhd
-$(VHDLS) += s6pll_multi.vhd
 $(VHDLS) += dds_18432.vhd
 $(VHDLS) += DCM_SP6.vhd
 $(VHDLS) += s6pll_250.vhd
-
+$(VHDLS) += clkin25_clkgen.vhd
+$(VHDLS) += clkin25_clkgen_s6.vhd
+$(VHDLS) += clkin25_clkgen_k7.vhd
+$(VHDLS) += clkin10_clkgen.vhd
+$(VHDLS) += clkin10_clkgen_s6.vhd
+$(VHDLS) += clkin10_clkgen_k7.vhd

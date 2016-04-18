@@ -10,9 +10,11 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 use work.config.all;
+use work.clk_config.all;
 use work.cpu2j0_pack.all;
 use work.data_bus_pack.all;
-use work.ddr_pack.all;
+use work.ddrc_cnt_pack.all;
+use work.dma_pack.all;
 library unisim;
 use unisim.vcomponents.all;
 entity pad_ring is
@@ -158,85 +160,96 @@ architecture impl of pad_ring is
     attribute loc of pin_spi_cs              : signal is "v3";
     attribute loc of pin_uart_rx             : signal is "b8";
     attribute loc of pin_uart_tx             : signal is "a8";
-    signal clk31_todcm : std_logic;
     signal clk_100mhz : std_logic;
     signal clk_sys : std_logic;
-    signal clk_sys2x : std_logic;
+    signal clk_sys_2x : std_logic;
     signal clk_sys_90 : std_logic;
-    signal clock_locked : std_logic;
+    signal clkgen_i : std_logic;
+    signal clock_locked0 : std_logic;
+    signal clock_locked1 : std_logic;
     signal ddr_clk : std_logic;
     signal ddr_sd_ctrl : sd_ctrl_t;
     signal ddr_sd_data_i : sd_data_i_t;
     signal ddr_sd_data_o : sd_data_o_t;
+    signal ddr_sd_pre_ctrl : sd_ctrl_t;
     signal dr_data_i : dr_data_i_t;
     signal dr_data_o : dr_data_o_t;
+    signal flash_clk : std_logic;
+    signal flash_cs : std_logic_vector(1 downto 0);
+    signal flash_miso : std_logic;
+    signal flash_mosi : std_logic;
     signal pi : std_logic_vector(31 downto 0);
     signal pll_rst : std_logic;
     signal po : std_logic_vector(31 downto 0);
     signal reset : std_logic;
-    signal spi_clk : std_logic;
-    signal spi_cs : std_logic_vector(1 downto 0);
-    signal spi_miso : std_logic;
-    signal spi_mosi : std_logic;
-    signal uart_rx : std_logic;
-    signal uart_tx : std_logic;
+    signal uart0_rx : std_logic;
+    signal uart0_tx : std_logic;
 begin
     soc : entity work.soc(impl)
         port map (
             clk_sys => clk_sys,
-            clk_sys2x => clk_sys2x,
+            clk_sys_2x => clk_sys_2x,
             clk_sys_90 => clk_sys_90,
-            clock_locked => clock_locked,
-            ddr_sd_ctrl => ddr_sd_ctrl,
             ddr_sd_data_i => ddr_sd_data_i,
             ddr_sd_data_o => ddr_sd_data_o,
+            ddr_sd_pre_ctrl => ddr_sd_pre_ctrl,
+            flash_clk => flash_clk,
+            flash_cs => flash_cs,
+            flash_miso => flash_miso,
+            flash_mosi => flash_mosi,
             pi => pi,
             po => po,
             reset => reset,
-            spi_clk => spi_clk,
-            spi_cs => spi_cs,
-            spi_miso => spi_miso,
-            spi_mosi => spi_mosi,
-            uart_rx => uart_rx,
-            uart_tx => uart_tx
+            uart0_rx => uart0_rx,
+            uart0_tx => uart0_tx
         );
     ddr_clkgen : entity work.ddr_clkgen(interface)
         port map (
             clk0_o => clk_sys,
             clk125_o => open,
             clk180_o => open,
-            clk2x_o => clk_sys2x,
+            clk2x_o => clk_sys_2x,
             clk90_o => clk_sys_90,
-            clk_i => clk31_todcm,
-            locked => clock_locked,
+            clk_i => clkgen_i,
+            locked => clock_locked0,
             reset_i => pll_rst
         );
-    ddr_iocells : entity work.ddr_iocells(interface)
+    ddr_iocells : configuration work.ddr_phy_spartan6
+        generic map (
+            read_sample_tm => CFG_DDR_READ_SAMPLE_TM
+        )
         port map (
-            ckpo => ddr_clk,
-            ddr_clk0 => clk_sys,
-            ddr_clk90 => clk_sys_90,
-            dr_data_i => dr_data_i,
-            dr_data_o => dr_data_o,
-            reset => reset,
-            sd_data_i => ddr_sd_data_i,
-            sd_data_o => ddr_sd_data_o
+            ck2x0 => clk_sys,
+            ck2x90 => clk_sys_90,
+            ck_n => open,
+            ck_p => ddr_clk,
+            d_c => ddr_sd_ctrl,
+            d_di => dr_data_i,
+            d_do => dr_data_o,
+            rst => reset,
+            s_c => ddr_sd_pre_ctrl,
+            s_i => ddr_sd_data_i,
+            s_o => ddr_sd_data_o
         );
     pll_250 : entity work.pll_250(xilinx)
+        generic map (
+            clk_cpu_divide => CFG_CLK_CPU_DIVIDE
+        )
         port map (
             clk => clk_100mhz,
+            clk125_0 => open,
+            clk125_180 => open,
+            clk125_270 => open,
+            clk125_90 => open,
             clk250 => open,
-            clk31 => clk31_todcm,
-            clk_0 => open,
-            clk_180 => open,
-            clk_270 => open,
-            clk_90 => open,
+            clk_cpu => clkgen_i,
             locked => open,
             reset_o => pll_rst
         );
     reset_gen : entity work.reset_gen(arch)
         port map (
-            clock_locked => clock_locked,
+            clock_locked0 => clock_locked0,
+            clock_locked1 => '1',
             reset => reset
         );
     -- led
@@ -271,9 +284,12 @@ begin
     pi(14) <= po(14);
     -- sevensegment
     pi(15) <= po(15);
-    pi(16) <= '0';
-    pi(17) <= '0';
-    pi(18) <= '0';
+    -- sevensegmentenable
+    pi(16) <= po(16);
+    -- sevensegmentenable
+    pi(17) <= po(17);
+    -- sevensegmentenable
+    pi(18) <= po(18);
     pi(19) <= '0';
     pi(20) <= '0';
     pi(21) <= '0';
@@ -725,7 +741,7 @@ begin
             SLEW => "fast"
         )
         port map (
-            I => spi_clk,
+            I => flash_clk,
             O => pin_sd_clk
         );
     obuf_sd_cs : OBUF
@@ -735,7 +751,7 @@ begin
             SLEW => "fast"
         )
         port map (
-            I => spi_cs(0),
+            I => flash_cs(0),
             O => pin_sd_cs
         );
     ibuf_sd_miso : IBUF
@@ -744,7 +760,7 @@ begin
         )
         port map (
             I => pin_sd_miso,
-            O => spi_miso
+            O => flash_miso
         );
     obuf_sd_mosi : OBUF
         generic map (
@@ -753,7 +769,7 @@ begin
             SLEW => "fast"
         )
         port map (
-            I => spi_mosi,
+            I => flash_mosi,
             O => pin_sd_mosi
         );
     obuf_sevensegment0 : OBUF
@@ -877,7 +893,7 @@ begin
             SLEW => "fast"
         )
         port map (
-            I => uart_tx,
+            I => uart0_tx,
             O => pin_uart_rx
         );
     ibuf_uart_tx : IBUF
@@ -886,7 +902,7 @@ begin
         )
         port map (
             I => pin_uart_tx,
-            O => uart_rx
+            O => uart0_rx
         );
     obufds_mcb3_dram_ck_mcb3_dram_ck_n : OBUFDS
         generic map (

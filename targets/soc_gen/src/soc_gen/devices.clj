@@ -43,7 +43,7 @@
              (cond
               (nil? entity)
               (do
-                ;;(println "ENTITY NAMES:" (keys entities))
+                (println "ENTITY NAMES:" (keys entities))
                 (errors/add-error (str "Unable to map device \"" id "\" " entity-id " to entity")))
 
               (and config-id (nil? config))
@@ -85,7 +85,7 @@
 
 (defn- process-device-arch
   "Update a device class based on the architecture parsed from the vhdl"
-  [dev]
+  [name dev]
   (let [arch (:architecture dev)
         regs (:regs dev)
 
@@ -93,34 +93,58 @@
         regs (second
               (reduce
                (fn [[addr regs] reg]
-                 (let [addr (or (:addr reg) addr)
-                       width (or (:width reg) 4)
+                 (let [;; set defaults
+                       reg (merge {:width 4
+                                   :type :fixed
+                                   :addr addr}
+                                  reg)
+                       addr (:addr reg)
+                       width (:width reg)
+                       ;; clean up register name
                        reg (assoc reg
-                                  ;; calculate default address offsets using widths and known
-                                  ;; offsets
-                                  :addr addr
-                                  :width width
-                                  ;; clean up register name
-                                  :name (s/trim (s/lower-case (:name reg))))]
-                   [(+ addr width) (conj regs reg)]))
+                                  :name (s/trim (s/lower-case (:name reg)))
+                                  :byte-range [addr (+ addr width -1)])]
+                   [(+ addr width) ;; calculate default address of next register
+                    (conj regs reg)]))
                [0 []]
                regs))
+        dev (assoc dev :regs regs)
 
-        dev (if (seq regs)
-              (assoc dev :reg-range
-                     (let [[low high]
-                           (reduce
-                            (fn [[min-addr max-addr] {:keys [addr width]}]
-                              [(min min-addr addr) (max max-addr addr (+ addr width -1))])
-                            [Long/MAX_VALUE Long/MIN_VALUE]
-                            regs)]
-                       ;; round to aligned 4 byte boundaries
-                       (br/expand [low high] 4)))
-              dev)
+        dev
+        (if (seq regs)
+          (assoc dev
+                 :left-addr-bit
+                 (let [max-address
+                       (apply max 0 (map (fn [reg] (+ (:addr reg) (:width reg))) regs))
+                       required-left-bit
+                       (dec (int (Math/ceil (/ (Math/log max-address) (Math/log 2)))))
+
+                       left-addr-bit
+                       (if-let [left-addr-bit (:left-addr-bit dev)]
+                         (do
+                           (when (< left-addr-bit required-left-bit)
+                             (errors/add-error
+                              (str "Device class \"" name "\" :left-addr-bit "
+                                   left-addr-bit
+                                   " is too small to hold registers. Must be at least "
+                                   required-left-bit)))
+                           (max left-addr-bit required-left-bit))
+                         required-left-bit)]
+                   left-addr-bit)
+
+                 :reg-range
+                 (let [low (apply min (map (comp first :byte-range) regs))
+                       high (apply max (map (comp second :byte-range) regs))]
+                   ;; round to aligned 4 byte boundaries
+                   (br/expand [low high] 4)))
+          dev)
+
         ;; determine how to map registers to the available bus ports
         ;; of the entity
-        reg-types (group-by :type regs)]
-    (assoc dev :regs regs)))
+        ;;reg-types (group-by :type regs)
+        ;;left-addr-bit (:left-addr-bit dev)
+        ]
+    dev))
 
 (defn- gen-unique-name [prefix existing-names]
   (some (fn [i]
@@ -163,6 +187,87 @@
                   [name (assoc dev :name name)]))
               devices))))
 
+(defn- process-irq-description [desc]
+  (let [default {:cpu 0 :path nil :dt? true}
+        desc
+        (match desc
+               (irq :guard integer?)
+               {:irq irq}
+
+               [(cpu :guard #{0 1}) (irq :guard integer?)]
+               {:cpu cpu :irq irq}
+
+               (m :guard #(and (map? %)
+                               (set/subset? (keys %) #{:cpu :irq :path :dt?})))
+               (let [m (merge default desc)
+                     path (:path m)
+                     path (if (integer? path) [path] path)
+                     m (assoc m :path path)]
+                 (if (and
+                      (integer? (:irq m))
+                      (integer? (:cpu m))
+                      (contains? #{true false} (:dt? m))
+                      (or (nil? path)
+                          (and
+                           (vector? path)
+                           (every? integer? path))))
+                   m
+                   nil))
+
+               :else
+               nil)]
+    (if desc
+      (merge {:cpu 0 :path nil :dt? true} desc)
+      desc)))
+
+(defn process-irq-numbers
+  [design]
+  (update-in
+   design
+   [:devices]
+   (fn [devices]
+     (into
+      {}
+      (map
+       (fn [[name dev]]
+         (let [ports (get-in design [:device-classes (:class dev) :entity :ports])
+               ;; allow :irq property of device to be overridden
+               irq (get (:device-irqs design) name (:irq dev))
+               irq
+               (when irq
+
+                 ;; irq can be a single irq description, or a map with
+                 ;; keys that are string port names and values are irq
+                 ;; description
+                 (if (and (map? irq) (every? string? (keys irq)))
+                   (into {}
+                         (for [[n desc] irq]
+                           [n
+                            (if-let [d (process-irq-description desc)]
+                              d
+                              (errors/add-error
+                               (str "Invalid irq description \"" n "\" for device \"" (:name dev) "\".")))]))
+                   {;; find name of unnamed irq ports based on irq? attribute
+                    (if-let [noname-port (some (fn [[n p]] (if (:irq? p) n)) ports)]
+                      noname-port
+                      (errors/add-error
+                       (str "Cannot find irq port for device \"" (:name dev) "\"")))
+                    (if-let [d (process-irq-description irq)]
+                      d
+                      (errors/add-error
+                       (str "Invalid irq description for device \"" (:name dev) "\".")))}))]
+           (when irq
+             ;; verify a port exists with a matching name
+             (doseq [n (keys irq)]
+               (if-not (contains? ports n)
+                 (errors/add-error
+                  (str "Unrecognized irq port \"" n "\" for device \"" (:name dev) "\".")))))
+           [name
+            (if irq
+              (assoc dev :irq irq)
+              (dissoc dev :irq))]))
+       devices)))))
+
 (defn assign-device-ports
   "Assigns global names to ports that don't yet have them using the
   name of the device. Also renames signals using given map."
@@ -173,7 +278,8 @@
                      (reduce
                       (fn [ports [name port]]
                         (let [port
-                              (if ((some-fn :irq? :data-bus :open? :value) port)
+                              (if (or ((some-fn :irq? :data-bus :ring-bus :open? :value) port)
+                                      (contains? (:irq dev) name))
                                 ;; 'special' ports are not connected
                                 ;; based on global-signal names, so
                                 ;; remove those names
@@ -210,8 +316,9 @@
         ;; create literals for generics set by the user
         (reduce
          (fn [m [name val]]
-           (let [gen (get entity-generics name)]
-             (assoc m (s/lower-case name)
+           (let [name (lower-case name)
+                 gen (get entity-generics name)]
+             (assoc m name
                     (if (and gen (number? val))
                       (v/num-val (v/vobj (:type gen)) val)
                       (v/literal val)))))
@@ -244,10 +351,7 @@
                          (resolve-device-port port generic-vals)
                          ;; merge original port map to allow
                          ;; overridding values in design
-                         (let [orig-port (get ports name)]
-                           (if (string? orig-port)
-                             {:global-signal orig-port}
-                             orig-port)))]))
+                         (get ports name))]))
            (into {})))))
 
 (defn- types-used
@@ -261,8 +365,8 @@
          ;; lib. Should return these also?
          {:type :index-sub-type :base base} (types-used base)
          {:type :std} nil
-         {:type :array-type :id "unsigned"} nil
-         {} (throw (Exception. (str "Unhandled type " (v/vstr (v/vobj t)))))))
+         {:type :array-type :id id} (when-not (#{"unsigned" "signed"} id) [id])
+         {} (throw (Exception. (str "Unhandled type " t (v/vstr (v/vobj t)))))))
 
 (defn- resolve-port-types
   "The types used in entity ports require using certain packages. If
@@ -695,12 +799,12 @@
         chain
         (->> chain
              (mapv (fn [x]
-                     (if-let [[_ t id] (re-matches #"([a-zA-Z0-9]+)\.([a-zA-Z0-9]+)" x)]
+                     (if-let [[_ t id] (re-matches #"([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)" x)]
                        (let [ctx {:type (keyword t) :id id}]
                          (if (contains? port-map [ctx :in])
                            ctx
                            (errors/add-error (str "Unknown item in bist-chain: " x))))
-                       (errors/add-error (str "Invalid item in bist-chain: " x)))))
+                       (errors/add-error (str "Invalid item in bist-chain: " \" x \")))))
              (remove nil?))]
     (when-let [missing (seq
                         (set/difference
@@ -736,6 +840,22 @@ signal-name to a map of info about the signal"
         device-ports (mapcat (gather-ports :device) (:devices design))
         padring-ports (mapcat (gather-ports :padring) (:padring-entities design))
 
+        ;; Gather the peripheral buses from all the used entities.
+        peripheral-buses
+        (->>
+         (concat
+           (:top-entities design)
+           (select-keys
+            (:device-classes design)
+            (set (map :class (vals (:devices design)))))
+           (:padring-entities design))
+         (map (comp :peripheral-bus :entity val))
+         (filter identity)
+         (mapcat keys))
+
+        peripheral-buses-count (frequencies peripheral-buses)
+        peripheral-buses (set peripheral-buses)
+
         port->str
         (fn [port]
           (let [{:keys [type id]} (:context port)]
@@ -753,40 +873,17 @@ signal-name to a map of info about the signal"
              :context {:type :device :id "_internal"}
              :global-signal (:id %))
           (concat
-           [{:id "cpu0_periph_dbus_i"
-             :dir :out
-             :type (fake-record-type "cpu_data_i_t")}
-            {:id "cpu0_periph_dbus_o"
-             :dir :in
-             :type (fake-record-type "cpu_data_o_t")}
-            {:id "cpu1_periph_dbus_i"
-             :dir :out
-             :type (fake-record-type "cpu_data_i_t")}
-            {:id "cpu1_periph_dbus_o"
-             :dir :in
-             :type (fake-record-type "cpu_data_o_t")}]
-           ;; find the irqs port, if one exists, to determine it's bit
-           ;; width
-           (when-let [iq (first (filter #(and (= (:global-signal %) "irqs")
-                                              (= (:dir %) :in)) top-ports))]
-             (let [t (:type iq)]
-               (if-let [from
-                        (match [t]
-                               [{:type :index-sub-type
-                                 :base {:type :std, :id "std-logic-vector"}
-                                 :ranges [{:dir :downto :to 0M :from from}]}]
-                               from
-                               :else nil)]
-                 [(with-meta
-                    {:id "irqs"
-                     :dir :out
-                     :type t}
-                    {:num-irq (inc (long from))})]
-                 (do (errors/add-error
-                      (str "Found irqs port with unexpected type: "
-                           (v/vstr (v/vobj t))
-                           " should be std_logic_vector(N downto 0)"))
-                     nil))))))
+           ;; each peripheral bus has two ports that end in
+           ;; the devices entity
+           (mapcat
+            (fn [bus]
+              [{:id (str bus "_periph_dbus_i")
+                :dir :out
+                :type (fake-record-type "cpu_data_i_t")}
+               {:id (str bus "_periph_dbus_o")
+                :dir :in
+                :type (fake-record-type "cpu_data_o_t")}])
+            peripheral-buses)))
          ;; add fake port for pi signal in padring
          ;; TODO: remove this hack when pio is handled inside the
          ;; pio device properly
@@ -801,7 +898,7 @@ signal-name to a map of info about the signal"
         ;; add global signals to connect bist chain
         all-signal-ports
         (into (remove #(and (:bist-chain %) (nil? (:value %))) all-signal-ports)
-              (process-bist-chain (:bist-chain design) (filter #(and (:bist-chain %) (nil? (:value %))) all-signal-ports)))
+              (process-bist-chain (flatten (:bist-chain design)) (filter #(and (:bist-chain %) (nil? (:value %))) all-signal-ports)))
 
         all-signal-ports
         (->> all-signal-ports
@@ -845,15 +942,24 @@ signal-name to a map of info about the signal"
               (fn [[sig-name ports]]
                 [sig-name
                  (if (contains? zero-signals sig-name)
-                   (conj ports
-                         {:id sig-name
-                          :global-signal sig-name
-                          :context {:type :top :id "_zero"}
-                          :name (str "top._zero[" sig-name "]")
-                          :dir :out
-                          :type (:type (first ports))})
+                   (if (some (fn [x] (if (= :out (:dir x)) x)) ports)
+                     ;; don't zero the signal if there's already
+                     ;; something assigning it
+                     ports
+                     (conj ports
+                           {:id sig-name
+                            :global-signal sig-name
+                            :context {:type :top :id "_zero"}
+                            :name (str "top._zero[" sig-name "]")
+                            :dir :out
+                            :type (:type (first ports))}))
                    ports)]))
              (into {}))]
+
+    (doseq [[bus num] peripheral-buses-count]
+      (if (not= num 1)
+        (errors/add-error
+         (str "Multiple (" num ") peripheral buses with the name \"" bus "\" exist"))))
 
     (let [signals (->> all-signal-ports
                        (map (fn [[id ports]]
@@ -863,7 +969,10 @@ signal-name to a map of info about the signal"
                                    :ports ports}]))
                        (into {}))]
       ;;(println "Gen signals:" signals)
-      (assoc design :global-signals signals))))
+      (assoc design
+             :global-signals signals
+             :peripheral-buses (merge (into {} (for [x peripheral-buses] [x true]))
+                                      (:peripheral-buses design))))))
 
 (defn- validate-global-signals [design]
     ;; verify some properties of the ports
@@ -927,24 +1036,8 @@ signal-name to a map of info about the signal"
 (defn- validate-devices
   [design]
   (let [devices (vals (:devices design))
-        dev-classes (:device-classes design)]
-    (doseq [[irq num]
-            (->> devices
-                 (map :irq)
-                 (filter identity)
-                 frequencies
-                 (filter #(not= 1 (val %))))]
-      (errors/add-error (str "Cannot share irq line " irq " for multiple devices")))
-
-    ;; check base address
-    (doseq [dev devices]
-      (if-let [base-addr (:base-addr dev)]
-        (if (not= (bit-and base-addr 0xF0000000) 0xA0000000)
-          (errors/add-error (str "Device " (:name dev) " based address 0x"
-                                 (s/upper-case (Long/toString base-addr 16))
-                                 " is invalid. Bits 31-28 must be 0xA. This is a limitation of bus address decoding in hand-written VHDL around the CPU.")))
-        (errors/add-error (str "Device " (:name dev) " must have a base register address"))))
-
+        dev-classes (:device-classes design)
+        data-devices (filter #(:data-bus (:entity (dev-classes (:class %)))) devices)]
     ;; Check registers of device classes used in design
     (doseq [[id devc] (select-keys dev-classes (set (map :class devices)))]
       ;;(println id ":" (:reg-range devc) (s/join ", " (map :name (:regs devc))))
@@ -976,15 +1069,102 @@ signal-name to a map of info about the signal"
           (errors/add-error (str "Registers of device class \"" id "\" with duplicate name: "
                                  (s/join ", " (map key dups)))))))
 
-    ;; Check that different devices don't overlap
-    #_(when-not (errors/error?)
+    ;; ensure base-addr and left-addr-bit either both exist and are
+    ;; valid or both don't exist
+    (when-not (errors/error?)
       (doseq [dev devices]
         (let [dev-cls (get dev-classes (:class dev))
               base-addr (:base-addr dev)
-              regs (:regs dev-cls)]
-          (when regs
-            ()
-            ))))
+              left-addr-bit (:left-addr-bit dev-cls)
+
+              has-base-addr
+              (if (and (integer? base-addr) (>= base-addr 0) (<= base-addr 0xFFFFFFFF))
+                true
+                (do
+                  (when-not (nil? base-addr)
+                    (errors/add-error
+                     (str "Invalid base-addr for device \""
+                          (:name dev) "\" class \"" (:class dev)
+                          "\". Must be integer in memory range.")))
+                  false))
+
+              has-left-addr-bit
+              (if (and (integer? left-addr-bit) (pos? left-addr-bit))
+                true
+                (do
+                  (when-not (nil? left-addr-bit)
+                    (errors/add-error
+                     (str "Invalid left-addr-bit for device \""
+                          (:name dev) "\" class \"" (:class dev)
+                          "\". Must be positive integer.")))
+                  false))
+
+              has-data-bus (boolean (:data-bus (:entity dev-cls)))]
+
+          (cond
+            (not= has-base-addr has-left-addr-bit has-data-bus)
+            (errors/add-error
+             (str "Device " (:name dev) " " (:class dev) " has "
+                  (if has-data-bus
+                    "data bus ports but base-addr and left-addr-bit are not valid. Cannot connect device to the data bus."
+                    "no data bus ports but has a base-addr or left-addr-bit. Device should not be connected to the data bus.")))
+
+            ;; 
+            has-data-bus
+            (let [over-specified (bit-and
+                                  base-addr
+                                  (dec (bit-shift-left 1 (inc left-addr-bit))))]
+              (when-not (zero? over-specified)
+                (errors/add-error
+                 (str "Device " (:name dev) " " (:class dev)
+                      (format " has non-zero bits in its base-addr 0x%08x which are used by the device\n  according to its left-addr-bit %d" base-addr left-addr-bit)
+                      ". base-addr should only specify bits that aren't checked by\n  the device itself. Ensure that bits " (format "0x%x" over-specified) " belong in base-addr."))))))))
+
+    ;; cpu_core_pkg.vhd's decode_core_data_addr requires all device
+    ;; addresses begin with 0xa. Check that is true
+    (when-not (errors/error?)
+      (doseq [dev data-devices]
+        (let [base-addr (:base-addr dev)]
+          (if (not= (bit-and base-addr 0xF0000000) 0xA0000000)
+            (errors/add-error
+             (str "Device " (:name dev) "'s base address " (format "0x%08x" base-addr) " is invalid. Bits 31-28 must be 0xA."))))))
+    
+    ;; Check that devices with data bus connections don't overlap
+    (when-not (errors/error?)
+      (let [addr-ranges
+            (->>
+             data-devices
+             (map (fn [dev]
+                    (let [dev-cls (get dev-classes (:class dev))
+                          base-addr (:base-addr dev)
+                          left-addr-bit (:left-addr-bit dev-cls)]
+                      [(:name dev)
+                       [base-addr
+                        (+ base-addr
+                           (dec (bit-shift-left 1 (inc left-addr-bit))))]]))))
+            ;; Add fake range for hard-coded mappings in vhdl
+            addr-ranges (conj addr-ranges
+                              ;; TODO: Make memory ranges more restrictive?
+                              ["sram" [0x00000000 0x0FFFFFFF]]
+                              ["dram" [0x10000000 0x1FFFFFFF]]
+                              ["cpumreg" [0xabcd0600 0xabcd06FF]])]
+
+        (when-let [overlaps (seq (set (br/overlaps (map second addr-ranges))))]
+          (let [range-to-devs (group-by second addr-ranges)]
+            (errors/add-error
+             (str "Multiple device memory mapped regions overlap:\n    "
+                  (s/join "\n    "
+                          (->>
+                           (select-keys range-to-devs overlaps)
+                           vals
+                           (apply concat)
+                           (sort-by second)
+                           (map (fn [[n [r1 r2]]]
+                                  (format "0x%08x-0x%08x %s" r1 r2 n)))))))))
+
+        (println "Device memory mapping:")
+        (doseq [[name [r1 r2]] (sort-by second addr-ranges)]
+          (println (format "  %08X-%08X" r1 r2) name))))
     #_(when-not (errors/error?)
       (let [dev-classes
             ;; calculate total register space width of each device class
@@ -998,10 +1178,114 @@ signal-name to a map of info about the signal"
             (println ))))))
   design)
 
+(defn- flatten-to-vecs [x]
+  (filter vector?
+          (rest (tree-seq  (fn [y] (and (sequential? y) (not (vector? y)))) seq (seq x)))))
+
 (defn- validate-rings
   "ensure ring definitions is valid and that nodes on rings match devices"
   [design]
-  design)
+  (let [devices (:devices design)
+        rings
+        (mapv
+         #(->>
+           %
+           (map
+            (fn [x]
+              (let [x (if (string? x) {:device  x} x)
+                    {dev-name :device
+                     ports :ports} x]
+                (if-let [dev (get devices dev-name)]
+                  (let [ports (vec (if (seq ports)
+                                     (vals (select-keys (:ports dev) ports))
+                                     ;; use default, detected ring bus ports
+                                     (->> (:ports dev)
+                                          vals
+                                          (filter :ring-bus))))]
+                    ;; ensure ports are two matching ring bus
+                    ;; ports with the same type and opposing directions
+                    (if (and (= (count ports) 2) (= (set (map :dir ports)) #{:in :out}))
+                      {:device dev-name
+                       :ports (into {} (map (fn [p] [(:dir p) p]) ports))}
+                      (errors/add-error
+                       (str "Invalid ring bus port pair " ports
+                            (:ports x) " of device \"" dev-name "\""))))
+                  (errors/add-error (str "Unknown device \"" dev-name
+                                         "\" referenced in rings"))))))
+           (filter identity))
+         (flatten-to-vecs (:rings design)))
+
+        ring-ports
+        (mapcat
+         #(mapcat
+           (fn [r]
+             (map
+              (fn [p]
+                (assoc p :device (:device r)))
+              (vals (:ports r))))
+           %)
+         rings)
+
+        rings
+        (if-not (errors/error?)
+          (mapv
+           (fn [i ring]
+             (let [port-type (:id (:type (:in (:ports (first ring)))))
+                   bus-width (case port-type
+                               "rbus_8b" 8
+                               "rbus_9b" 9)]
+               {:i i
+                :bus-width bus-width
+                :ring ring}))
+           (range)
+           rings)
+          rings)]
+
+    (let [dup-ports (->> ring-ports
+                         (map #(str (:device %) "." (:id %)))
+                         frequencies
+                         (filter (fn [[_ n]] (> n 1))))]
+      (doseq [[n freq] (seq dup-ports)]
+        (errors/add-error (str "Port " n " is connected to multiple rings: " freq))))
+
+    ;; check that bus widths match for all devices in each ring
+    (if-not (errors/error?)
+      (doseq [[i ring] (map vector (range) rings)]
+        (let [by-type
+              (->> ring
+                   :ring
+                   (mapcat
+                    (fn [r]
+                      (map #(select-keys % [:name :type]) (vals (:ports r)))))
+                   (group-by :type))]
+          (if (not= (count by-type) 1)
+            (errors/add-error
+             (str "Ring " i " has mismatching ring bus port widths: "
+                  (s/join " vs "
+                          (map (fn [[t rs]]
+                                 (str "(" (s/join "," (map :name rs)) ")"))
+                               by-type))))))))
+    (assoc design :rings rings)))
+
+(defn- preprocess-ports [ports]
+  (->> ports
+       (map (fn [[n p]]
+              [n
+               (cond
+                 (string? p)
+                 {:global-signal p}
+
+                 (or (integer? p) (symbol? p))
+                 {:value p}
+
+                 (and (map? p) (contains? p :signal))
+                 (-> p
+                     (assoc :global-signal (:signal p))
+                     (dissoc :signal))
+
+                 :else
+                 p)]))
+       (into {})))
 
 (defn combine-soc-description
   "Creates soc description by combining the design description provided by the
@@ -1024,7 +1308,7 @@ user and information parsed from the vhdl"
               (do
                 (errors/add-warning
                  (str "Found configuration \"" (:id config)
-                      "\" of unknown entitiy \"" (:entity config)) "\"")
+                      "\" of unknown entitiy \"" (:entity config) "\""))
                 entities)))
           entities
           (:configuration vhdl-by-type))
@@ -1044,25 +1328,46 @@ user and information parsed from the vhdl"
                                          rename renames]
                                      [rename sig]))))
 
+         update-ports-of-vals
+         (fn [m]
+           (->> m
+                (map (fn [[k v]]
+                             [k (update-in v [:ports] preprocess-ports)]))
+                (into {})))
+
          design
          (-> design
+
+             ;; clean up ports
+             (update-in [:device-classes] update-ports-of-vals)
+             (update-in [:top-entities] update-ports-of-vals)
+             (update-in [:padring-entities] update-ports-of-vals)
+             (update-in [:devices] (fn [devs] (mapv (fn [dev]
+                                                      (update-in dev [:ports] preprocess-ports)) devs)))
+
              (update-in [:device-classes]
                         (fn [devs]
                           ;; ignore device classes that aren't used
-                          (let [devs (select-keys devs
-                                                  (filter identity (map :class (:devices design))))]
+                          (let [used-classes (set (filter identity (map :class (:devices design))))
+                                ;; Add any classes that are required by the used ones
+                                used-classes
+                                (reduce
+                                 (fn [used cls]
+                                   (into used (:requires cls)))
+                                 used-classes
+                                 (map devs used-classes))
+                                devs (select-keys devs used-classes)]
                             (->> (choose-device-arch devs entities archs)
                                  (map
                                   (fn [[name dev]]
                                     [name
-                                     (process-device-arch dev)]))
+                                     (process-device-arch name dev)]))
                                  (into {})))))
              (update-in [:top-entities] resolve-entities entities archs pkgs (:merge-signals design))
              (update-in [:padring-entities] resolve-entities entities archs pkgs (:merge-signals design))
              (update-in [:devices] assign-device-names)
-             ;;(update-in [:rings] assign-ring-node-names)
+             process-irq-numbers
              (assign-all-device-ports pkgs)
-             ;;gather-device-ports
              gather-global-signals
              expose-signals
              process-pins

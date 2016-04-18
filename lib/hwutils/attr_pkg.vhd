@@ -26,6 +26,8 @@ package attr_pack is
   group global_ports is (signal <>);
   -- groups ports that connecting to the ring bus
   group bus_ports is (signal <>);
+  -- groups peripheral bus input/output pairs
+  group peripheral_bus is (signal <>);
 -- synopsys translate_on
 
   -- sets the global name of a port

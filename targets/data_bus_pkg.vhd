@@ -8,7 +8,8 @@ package data_bus_pack is
   type data_bus_device_t is (
     DEV_DDR,
     DEV_SRAM,
-    DEV_PERIPH
+    DEV_PERIPH,
+    DEV_CPU
   );
   type data_bus_i_t is array(data_bus_device_t'left to data_bus_device_t'right)
     of cpu_data_i_t;

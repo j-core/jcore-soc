@@ -1,6 +1,7 @@
-# This is a makefile snippet useful for simulating with ghdl on both
-# Linux and OSX. On both platforms it will create a create an
-# executable file that can be used to run the simulation.
+# This is a makefile snippet useful for simulating with ghdl using
+# both the mcode backend and the GCC and LLVM backends. The mcode
+# backend does not create a binary, so this Makefile instead creates a
+# wrapping shell script that will run ghdl.
 
 # To use this, set VHDL_TOPS and optionally VHDL_LIBS (described
 # below), define the dependicies between the vhdl library file and vhd

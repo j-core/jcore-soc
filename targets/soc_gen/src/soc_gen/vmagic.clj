@@ -355,6 +355,11 @@
   entity)
 
 (defn signal
+  ([name type default]
+   (let [type (cond
+                (instance? Signal type) (.getType type)
+                :else type)]
+       (Signal. name type default)))
   ([name type]
      (let [type (cond
                  (instance? Signal type) (.getType type)
@@ -1103,6 +1108,7 @@
 
 (defn ^String vstr [e]
   (cond
+   (nil? e) "(nil)"
    ;; support printing types by making a dummy signal and taking
    ;; substring of the output        
    (instance? SubtypeIndication e)
@@ -1120,3 +1126,6 @@
 (defn spit-vhdl [f content]
   (with-open [w (jio/writer f)]
     (VhdlOutput/toWriter content w)))
+
+(defn agg-others [x]
+  (Aggregate/OTHERS x))

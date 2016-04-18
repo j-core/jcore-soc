@@ -2,13 +2,16 @@ all: $(BOARD_NAME).bin $(BOARD_NAME).mcs
 
 # Set config
 include $(TOP_DIR)/soc_config.mk
-CONFIG_BUS_PERIOD = 32
-CONFIG_SA_WIDTH = 13
 
 include $(TOOLS_DIR)/soc.mk
 
 boot.elf: force
-	make -C $(TOP_DIR)/boot DDR_TYPE=lpddr REVISION="$(REVISION)" CONFIG_GRLCD=0 CONFIG_LCD_LOGO=0 clean all
+	make -C $(TOP_DIR)/boot REVISION="$(REVISION)" EXTRA_CFLAGS="-I$(BOARD_DIR)" \
+		DDR_TYPE=lpddr2 \
+		CONFIG_GRLCD=0 \
+		CONFIG_LCD_LOGO=0 \
+		CONFIG_SEVENSEGMENT=1 \
+		clean all
 	cp "$(TOP_DIR)/boot/bin/boot.elf" .
 
 # Set xilinx.mk variables

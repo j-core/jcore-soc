@@ -1,0 +1,276 @@
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+use work.cpu2j0_pack.all;
+-- use work.cpu2j0_components_pack.all;
+use work.bus_mux_typec_pack.all;
+use work.dma_pack.all;
+
+entity bus_mux_typec is -- bus multiplexer between cpu and dma
+  port (
+  clk           : in   std_logic;
+  rst           : in   std_logic;
+
+  m1_o          : out  cpu_data_i_t;
+  m1_ddrburst   : in   std_logic;
+  m1_lock       : in   std_logic;
+  m1_i          : in   cpu_data_o_t;
+
+  m2_o          : out  cpu_data_i_t;
+  m2_ddrburst   : in   std_logic;
+  m2_i          : in   cpu_data_o_t;
+
+  m3_o          : out  cpu_data_i_t;
+  m3_ddrburst   : in   std_logic;
+  m3_lock       : in   std_logic;
+  m3_i          : in   cpu_data_o_t;
+
+  m4_o          : out  cpu_data_i_t;
+  m4_ddrburst   : in   std_logic;
+  m4_i          : in   cpu_data_o_t;
+
+  m5_o          : out  bus_ddr_i_t;
+  m5_i          : in   bus_ddr_o_t;
+  mem_o         : out  cpu_data_o_t;
+  mem_ddrburst  : out  std_logic;
+  mem_i         : in   cpu_data_i_t
+      );
+end entity bus_mux_typec;
+
+-- connection 
+-- m1 cpu0 data
+-- m2 cpu0 inst
+-- m3 cpu1 data
+-- m4 cpu1 inst
+-- m5 dma
+
+architecture beh of bus_mux_typec is
+register variable this : bus_mux_typec_reg_t reset := BUS_MUX_TYPEC_REG_RESET;
+    signal nx_count_woack_sig : std_logic_vector( 2 downto  0);
+begin
+    bus_mux_typec : process (this, m1_i, m1_ddrburst, m1_lock, m2_i, m2_ddrburst, m3_i, m3_ddrburst, m3_lock, m4_i, m4_ddrburst, m5_i,  mem_i);
+
+    register this when clk='1' and clk'event reset when rst='1';
+
+    variable nx                      : bus_mux_typec_reg_t;
+--    variable nx_state_busarbc        : state_busarbc_t;
+--    variable nx_state_busarbc_round  : state_busarbc_t;
+--    variable nx_valid_accmem        : std_logic;
+--    variable nx_count_woack   : std_logic_vector(2 downto 0);
+--    variable nx_count         : std_logic_vector(2 downto 0);
+  begin
+
+
+--  if(m1_i.en = '1') or (m2_i.en = '1') then
+--    case this.state_busarbc is
+--    when M1R    => nx_state_busarbc_round := M1WA;
+--    when M1WA   => nx_state_busarbc_round := M2;
+--    when M2     => nx_state_busarbc_round := M1WB;
+--    when M1WB   => nx_state_busarbc_round := M1R;
+--    when others => nx_state_busarbc_round := M1R;
+--    end case;
+--  else             nx_state_busarbc_round := this.state_busarbc_round;
+--  end if;
+
+
+    -- main state machine -----------------------------------------------------
+    if(this.count /= b"000") or 
+      ((this.mem_o.en = '1') and (this.mem_ack = '0') and
+      (this.state_busarbc /= M1LOCK1) and
+      (this.state_busarbc /= M1LOCK2) and
+      (this.state_busarbc /= M3LOCK1) and
+      (this.state_busarbc /= M3LOCK2)) then
+                                       nx.state_busarbc_woa :=
+                                     this.state_busarbc;
+    else
+      case this.state_busarbc is
+      when M1 =>
+        if   (m2_i.en = '1') then      nx.state_busarbc_woa := M2;
+        elsif(m3_i.en = '1') then
+          if(m3_i.wr = '0') and (m3_lock = '1') then
+                                       nx.state_busarbc_woa := M3LOCK1;
+          else                         nx.state_busarbc_woa := M3; end if;
+        elsif(m4_i.en = '1') then      nx.state_busarbc_woa := M4;
+        elsif(m5_i.en = '1') then      nx.state_busarbc_woa := M5;
+        else
+          if(m1_i.en = '1') and
+            (m1_i.wr = '0') and (m1_lock = '1') then
+                                       nx.state_busarbc_woa := M1LOCK1;
+          else                         nx.state_busarbc_woa := M1; end if;
+        end if;
+      when M1LOCK1 =>
+                                       nx.state_busarbc_woa := M1LOCK1;
+      when M1LOCK2 | M12LOCKT =>
+        if(m1_i.en = '1') then
+          if(m1_i.wr = '0') and (m1_lock = '1') then
+                                       nx.state_busarbc_woa := M1LOCK1;
+          else                         nx.state_busarbc_woa := M1; end if;
+        elsif(m2_i.en = '1') then      nx.state_busarbc_woa := M12LOCKT;
+        elsif(m1_lock = '0') then      nx.state_busarbc_woa := IDLE;
+        else                           nx.state_busarbc_woa := M1LOCK2; end if;
+      when M2 =>
+        if   (m3_i.en = '1') then
+          if(m3_i.wr = '0') and (m3_lock = '1') then
+                                       nx.state_busarbc_woa := M3LOCK1;
+          else                         nx.state_busarbc_woa := M3; end if;
+        elsif(m4_i.en = '1') then      nx.state_busarbc_woa := M4;
+        elsif(m5_i.en = '1') then      nx.state_busarbc_woa := M5;
+        elsif(m1_i.en = '1') then
+          if(m1_i.wr = '0') and (m1_lock = '1') then
+                                       nx.state_busarbc_woa := M1LOCK1;
+          else                         nx.state_busarbc_woa := M1; end if;
+        else                           nx.state_busarbc_woa := M2; end if;
+      when M3 =>
+        if   (m4_i.en = '1') then      nx.state_busarbc_woa := M4;
+        elsif(m5_i.en = '1') then      nx.state_busarbc_woa := M5;
+        elsif(m1_i.en = '1') then
+          if(m1_i.wr = '0') and (m1_lock = '1') then
+                                       nx.state_busarbc_woa := M1LOCK1;
+          else                         nx.state_busarbc_woa := M1; end if;
+        elsif(m2_i.en = '1') then      nx.state_busarbc_woa := M2;
+        else
+          if(m3_i.en = '1') and
+            (m3_i.wr = '0') and (m3_lock = '1') then
+                                       nx.state_busarbc_woa := M3LOCK1;
+          else                         nx.state_busarbc_woa := M3; end if;
+        end if;
+      when M3LOCK1 =>
+                                       nx.state_busarbc_woa := M3LOCK1;
+      when M3LOCK2 | M34LOCKT =>
+        if(m3_i.en = '1') then
+          if(m3_i.wr = '0') and (m3_lock = '1') then
+                                       nx.state_busarbc_woa := M3LOCK1;
+          else                         nx.state_busarbc_woa := M3; end if;
+        elsif(m4_i.en = '1') then      nx.state_busarbc_woa := M34LOCKT;
+        elsif(m3_lock = '0') then      nx.state_busarbc_woa := IDLE;
+        else                           nx.state_busarbc_woa := M3LOCK2; end if;
+      when M4 =>
+        if   (m5_i.en = '1') then      nx.state_busarbc_woa := M5;
+        elsif(m1_i.en = '1') then
+          if(m1_i.wr = '0') and (m1_lock = '1') then
+                                       nx.state_busarbc_woa := M1LOCK1;
+          else                         nx.state_busarbc_woa := M1; end if;
+        elsif(m2_i.en = '1') then      nx.state_busarbc_woa := M2;
+        elsif(m3_i.en = '1') then
+          if(m3_i.wr = '0') and (m3_lock = '1') then
+                                       nx.state_busarbc_woa := M3LOCK1;
+          else                         nx.state_busarbc_woa := M3; end if;
+        else                           nx.state_busarbc_woa := M4; end if;
+      when others =>
+        if   (m1_i.en = '1') then
+          if(m1_i.wr = '0') and (m1_lock = '1') then
+                                       nx.state_busarbc_woa := M1LOCK1;
+          else                         nx.state_busarbc_woa := M1; end if;
+        elsif(m2_i.en = '1') then      nx.state_busarbc_woa := M2;
+        elsif(m3_i.en = '1') then
+          if(m3_i.wr = '0') and (m3_lock = '1') then
+                                       nx.state_busarbc_woa := M3LOCK1;
+          else                         nx.state_busarbc_woa := M3; end if;
+        elsif(m4_i.en = '1') then      nx.state_busarbc_woa := M4;
+        else                           nx.state_busarbc_woa := M5; end if;
+      end case;
+    end if;
+
+    -- nx.state_busarb
+                                     nx.state_busarbc := nx.state_busarbc_woa;
+    case nx.state_busarbc is
+    when M1LOCK1 => 
+      if(mem_i.ack = '1') then       nx.state_busarbc := M1LOCK2; end if;
+    when M3LOCK1 => 
+      if(mem_i.ack = '1') then       nx.state_busarbc := M3LOCK2; end if;
+    when others =>
+    end case;
+
+  -- count (without mem ack logic) ------
+--    if((m1_i.en = '1') or (m2_i.en = '1')) then
+--                                              nx_valid_accmem := '1';
+--    else                                      nx_valid_accmem := '0'; end if;
+
+
+  -- mem input/output selector
+    -- initial value start
+    m1_o.ack        <= '0';
+    m2_o.ack        <= '0';
+    m3_o.ack        <= '0';
+    m4_o.ack        <= '0';
+    m5_o.ack        <= '0';
+    nx.ddrburst     := '0';
+    nx.dmaburst16   := '0';
+    nx.dmaburst16at := '0';
+    nx.mem_o        := NULL_DATA_O;
+    -- initial value end
+    case nx.state_busarbc_woa is
+    when M1 | M1LOCK1 | M1LOCK2 =>
+      nx.mem_o    := m1_i;
+      nx.ddrburst := m1_ddrburst;
+                     m1_o.ack <= mem_i.ack;
+    when M2 =>
+      nx.mem_o    := m2_i;
+      nx.ddrburst := m2_ddrburst;
+                     m2_o.ack <= mem_i.ack;
+    when M12LOCKT =>
+      nx.mem_o    := m2_i;
+      nx.ddrburst := '0';
+                     m2_o.ack <= mem_i.ack;
+    when M3 | M3LOCK1 | M3LOCK2 =>
+      nx.mem_o    := m3_i;
+      nx.ddrburst := m3_ddrburst;
+                     m3_o.ack <= mem_i.ack;
+    when M4 =>
+      nx.mem_o    := m4_i;
+      nx.ddrburst := m4_ddrburst;
+                     m4_o.ack <= mem_i.ack;
+    when M34LOCKT =>
+      nx.mem_o    := m4_i;
+      nx.ddrburst := '0';
+                     m4_o.ack <= mem_i.ack;
+    when M5 =>
+      nx.mem_o := to_cpu_data(m5_i);
+      nx.ddrburst := m5_i.burst32;
+      nx.dmaburst16 := m5_i.burst16;
+      if(m5_i.en = '1') then
+        if(this.count = b"000") then nx.dmaburst16at := m5_i.burst16;
+        else                         nx.dmaburst16at := this.dmaburst16at;
+        end if;
+      else                           nx.dmaburst16at := '0';
+      end if;
+                     m5_o.ack <= mem_i.ack;
+    when others => -- IDLE (no access transmit)
+    end case;
+
+  -- create nx_count (nx_count_woack + mem_i.ack)
+    if(mem_i.ack = '1') then
+      if(this.count /= b"000") then           nx.count :=
+                     std_logic_vector(unsigned(this.count) + 1); -- loop 8 or 4
+        if(this.dmaburst16at = '1') then      nx.count(2) := '0'; -- loop 4
+        end if;
+      elsif(nx.ddrburst = '1') or
+           (nx.dmaburst16 = '1') then         nx.count := b"001";
+      else                                    nx.count := b"000";
+      end if;
+    else                                      nx.count := this.count;
+    end if;
+  -- end of nx_count ------
+
+    this.state_busarbc_woa   := nx.state_busarbc_woa;
+    this.state_busarbc       := nx.state_busarbc;
+--  this.state_busarbc_round := nx.state_busarbc_round;
+    this.ddrburst            := nx.ddrburst;
+    this.dmaburst16          := nx.dmaburst16;
+    this.dmaburst16at        := nx.dmaburst16at;
+    this.valid_accmem        := nx.valid_accmem;
+    this.mem_o               := nx.mem_o;
+    this.mem_ack             := mem_i.ack;
+    this.count               := nx.count;
+  end process;
+
+  mem_o        <= this'combinatorial.mem_o;
+  mem_ddrburst <= this'combinatorial.ddrburst;
+  m1_o.d <= mem_i.d;
+  m2_o.d <= mem_i.d;
+  m3_o.d <= mem_i.d;
+  m4_o.d <= mem_i.d;
+  m5_o.d <= mem_i.d;
+
+end beh;

@@ -77,7 +77,7 @@ while(<STDIN>)
 # look for 'register variables' and insert signals for them
      if ($line =~ m/^(register)(\s+)(variable)(\s+)(\w+)(\s+)(:)(\s*)(.+)(\s+)(reset)(\s*)(:=)(\s*)(.+)(\s*);$/i) {
        push(@diversion, $white . "signal" . $2. $5 . "_c" . $6 . ":" . $8 . $9 . ";");
-       $line = "signal$2$5_r$6:$8$9;";
+       $line = "signal$2$5_r$6:$8$9 := $15;";
        push(@regvar, $5);
        push(@regvar_type, $9);
        push(@regvar_rst, $15);

@@ -10,29 +10,40 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 use work.config.all;
+use work.clk_config.all;
 use work.cpu2j0_pack.all;
 use work.data_bus_pack.all;
 entity devices is
     port (
+        cache01sel_ctrl_temp : out std_logic;
         clk_sys : in std_logic;
+        cpu0_data_master_ack : in std_logic;
+        cpu0_data_master_en : in std_logic;
+        cpu0_ddr_ibus_o : in cpu_instruction_o_t;
+        cpu0_event_i : out cpu_event_i_t;
+        cpu0_event_o : in cpu_event_o_t;
         cpu0_periph_dbus_i : out cpu_data_i_t;
         cpu0_periph_dbus_o : in cpu_data_o_t;
+        cpu1_ddr_ibus_o : in cpu_instruction_o_t;
         cpu1_periph_dbus_i : out cpu_data_i_t;
         cpu1_periph_dbus_o : in cpu_data_o_t;
-        irqs : out std_logic_vector(7 downto 0);
+        dcache0_ctrl : out cache_ctrl_t;
+        dcache1_ctrl : out cache_ctrl_t;
+        flash_clk : out std_logic;
+        flash_cs : out std_logic_vector(1 downto 0);
+        flash_miso : in std_logic;
+        flash_mosi : out std_logic;
+        icache0_ctrl : out cache_ctrl_t;
+        icache1_ctrl : out cache_ctrl_t;
         pi : in std_logic_vector(31 downto 0);
         po : out std_logic_vector(31 downto 0);
         reset : in std_logic;
-        spi_clk : out std_logic;
-        spi_cs : out std_logic_vector(1 downto 0);
-        spi_miso : in std_logic;
-        spi_mosi : out std_logic;
-        uart_rx : in std_logic;
-        uart_tx : out std_logic
+        uart0_rx : in std_logic;
+        uart0_tx : out std_logic
     );
 end;
 architecture impl of devices is
-    type device_t is (NONE, DEV_GPIO, DEV_SPI, DEV_UART);
+    type device_t is (NONE, DEV_AIC0, DEV_CACHE_CTRL, DEV_FLASH, DEV_GPIO, DEV_UART0);
     signal active_dev : device_t;
     type data_bus_i_t is array (device_t'left to device_t'right) of cpu_data_i_t;
     type data_bus_o_t is array (device_t'left to device_t'right) of cpu_data_o_t;
@@ -42,75 +53,117 @@ architecture impl of devices is
     begin
         -- Assumes addr(31 downto 28) = x"a".
         -- Address decoding closer to CPU checks those bits.
-        if addr(27 downto 9) = "1011110011010000000" then
-            if addr(8 downto 7) = "00" then
-                if addr(6) = '0' then
-                    return DEV_GPIO;
-                else
-                    return DEV_SPI;
+        if addr(27 downto 10) = "101111001101000000" then
+            if addr(9) = '0' then
+                if addr(8) = '0' then
+                    if addr(7) = '0' then
+                        if addr(6 downto 4) = "000" then
+                            -- ABCD0000-ABCD000F
+                            return DEV_GPIO;
+                        elsif addr(6 downto 3) = "1000" then
+                            -- ABCD0040-ABCD0047
+                            return DEV_FLASH;
+                        end if;
+                    elsif addr(7 downto 6) = "11" then
+                        -- ABCD00C0-ABCD00FF
+                        return DEV_CACHE_CTRL;
+                    end if;
+                elsif addr(8 downto 4) = "10000" then
+                    -- ABCD0100-ABCD010F
+                    return DEV_UART0;
                 end if;
-            elsif addr(8) = '1' then
-                return DEV_UART;
+            elsif addr(9 downto 6) = "1000" then
+                -- ABCD0200-ABCD023F
+                return DEV_AIC0;
             end if;
         end if;
         return NONE;
     end;
+    signal irqs0 : std_logic_vector(7 downto 0) := (others => '0');
 begin
+    -- Disconnected peripheral buses
+    cpu1_periph_dbus_i <= loopback_bus(cpu1_periph_dbus_o);
     -- multiplex data bus to and from devices
     active_dev <= decode_address(cpu0_periph_dbus_o.a);
     cpu0_periph_dbus_i <= devs_bus_i(active_dev);
     bus_split : for dev in device_t'left to device_t'right generate
         devs_bus_o(dev) <= mask_data_o(cpu0_periph_dbus_o, to_bit(dev = active_dev));
     end generate;
-    -- second CPU's bus is not used currently
-    cpu1_periph_dbus_i <= loopback_bus(cpu1_periph_dbus_o);
     devs_bus_i(NONE) <= loopback_bus(devs_bus_o(NONE));
     -- Instantiate devices
+    aic0 : entity work.aic(behav)
+        generic map (
+            c_busperiod => CFG_CLK_CPU_PERIOD_NS,
+            vector_numbers => (x"00", x"12", x"00", x"14", x"15", x"00", x"00", x"00")
+        )
+        port map (
+            back_i => cpu0_data_master_ack,
+            bstb_i => cpu0_data_master_en,
+            clk_bus => clk_sys,
+            db_i => devs_bus_o(DEV_AIC0),
+            db_o => devs_bus_i(DEV_AIC0),
+            enmi_i => '1',
+            event_i => cpu0_event_o,
+            event_o => cpu0_event_i,
+            irq_i => irqs0,
+            rst_i => reset,
+            rtc_nsec => open,
+            rtc_sec => open
+        );
+    cache_ctrl : entity work.icache_modereg(arch)
+        port map (
+            cache01sel_ctrl_temp => cache01sel_ctrl_temp,
+            cache0_ctrl_dc => dcache0_ctrl,
+            cache0_ctrl_ic => icache0_ctrl,
+            cache1_ctrl_dc => dcache1_ctrl,
+            cache1_ctrl_ic => icache1_ctrl,
+            clk => clk_sys,
+            cpu0_ddr_ibus_o => cpu0_ddr_ibus_o,
+            cpu1_ddr_ibus_o => cpu1_ddr_ibus_o,
+            db_i => devs_bus_o(DEV_CACHE_CTRL),
+            db_o => devs_bus_i(DEV_CACHE_CTRL),
+            int0 => irqs0(3),
+            int1 => open,
+            rst => reset
+        );
+    flash : entity work.spi2(arch)
+        generic map (
+            clk_freq => CFG_CLK_CPU_FREQ_HZ,
+            num_cs => 2
+        )
+        port map (
+            clk => clk_sys,
+            cs => flash_cs,
+            db_i => devs_bus_o(DEV_FLASH),
+            db_o => devs_bus_i(DEV_FLASH),
+            miso => flash_miso,
+            mosi => flash_mosi,
+            rst => reset,
+            spi_clk => flash_clk
+        );
     gpio : entity work.pio(beh)
         port map (
             clk_bus => clk_sys,
             db_i => devs_bus_o(DEV_GPIO),
             db_o => devs_bus_i(DEV_GPIO),
-            irq => irqs(4),
+            irq => irqs0(4),
             p_i => pi,
             p_o => po,
             reset => reset
         );
-    spi : entity work.spi(beh)
-        generic map (
-            c_csnum => 2,
-            fclk => 3.125E7
-        )
-        port map (
-            clk_bus => clk_sys,
-            db_i => devs_bus_o(DEV_SPI),
-            db_o => devs_bus_i(DEV_SPI),
-            reset => reset,
-            spi_clk => spi_clk,
-            spi_flashcs_o => spi_cs,
-            spi_miso => spi_miso,
-            spi_mosi => spi_mosi
-        );
-    uart : entity work.uartlitedb(arch)
+    uart0 : entity work.uartlitedb(arch)
         generic map (
             bps => 19200.0,
-            fclk => 3.125E7,
+            fclk => CFG_CLK_CPU_FREQ_HZ,
             intcfg => 1
         )
         port map (
             clk => clk_sys,
-            db_i => devs_bus_o(DEV_UART),
-            db_o => devs_bus_i(DEV_UART),
-            int => irqs(1),
+            db_i => devs_bus_o(DEV_UART0),
+            db_o => devs_bus_i(DEV_UART0),
+            int => irqs0(1),
             rst => reset,
-            rx => uart_rx,
-            tx => uart_tx
+            rx => uart0_rx,
+            tx => uart0_tx
         );
-    -- Ununsed irqs
-    irqs(0) <= '0';
-    irqs(2) <= '0';
-    irqs(3) <= '0';
-    irqs(5) <= '0';
-    irqs(6) <= '0';
-    irqs(7) <= '0';
 end;

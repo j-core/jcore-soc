@@ -104,7 +104,7 @@ package body misc_pack is
       when "100" =>
         event_i.cmd := BREAK;
       when others =>
-        event_i.cmd := RESET;
+        event_i.cmd := RESET_CPU;
     end case;
     if event_req = "000" then
       event_i.msk := '0';

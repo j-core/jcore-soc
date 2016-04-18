@@ -3,9 +3,16 @@ use ieee.std_logic_1164.all;
 use ieee.std_logic_unsigned.all;
 use ieee.numeric_std.all;
 use work.cpu2j0_pack.all;
+use work.misc_pack.all;
+use work.aic2_pack.all;
 
 entity aic is 
-	generic (c_busperiod : integer := 40);
+	generic (
+	c_busperiod : integer := 40;
+	-- sets the vector number sent to the CPU for each of the 8 elements of
+        -- the irq_i port
+	vector_numbers : v_irq_t := (x"11", x"12", x"13", x"14", x"15", x"16", x"17", x"18")
+	);
 	port (
 	clk_bus : in std_logic;
 	rst_i : in std_logic;
@@ -17,9 +24,8 @@ entity aic is
 	rtc_nsec : out std_logic_vector(31 downto 0);
 	irq_i : in std_logic_vector(7 downto 0) := (others => '0');
 	enmi_i : in std_logic;
-	event_req : out std_logic_vector(2 downto 0);
-	event_info : out std_logic_vector(11 downto 0);
-	event_ack_i : in std_logic
+	event_i : in cpu_event_o_t;
+	event_o : out cpu_event_i_t
 );
 end aic;
 
@@ -34,14 +40,13 @@ architecture behav of aic is
 	constant c_id1 : std_logic_vector(9 downto 0) := "00" & x"01";
 	constant c_id10 : std_logic_vector(9 downto 0) := "10" & x"00";
 	-- The following is IRQ level(3 downto 0) & vector(7 downto 0) for each irq_i
-	type v_irq_t is array(0 to 7) of std_logic_vector(7 downto 0);
-	constant v_irq : v_irq_t := (x"11", x"12", x"13", x"14", x"15", x"16", x"17", x"18");
 	constant id_irq : v_irq_t := (x"01", x"02", x"04", x"08", x"10", x"20", x"40", x"80");
 	-- Assume irq_i(0) is the highest level, irq_i(7) is the lowest level 
 	-- switch the orders if nessrary
 	component aic_edgedet port (
 		q : out std_logic;
 		clk : in std_logic;
+		rst : in std_logic;
 		irq : in std_logic;
 		en_i : in std_logic;
 		clr_i : in std_logic);
@@ -75,9 +80,13 @@ architecture behav of aic is
 	signal db_count : std_logic_vector(3 downto 0);
 	signal db_ackcount : std_logic_vector(10 downto 0);
 	signal pit_flag : std_logic;	-- flip over when there is PIT event
+
+	signal event_req : std_logic_vector(2 downto 0);
+	signal event_info : std_logic_vector(11 downto 0);
 begin
+	event_o <= to_event_i(event_req, event_info);
 	get_irqs : for irr in irq_i'range generate
-		iedge_inst : aic_edgedet port map( q => q_irqs(irr), clk => clk_bus, irq => irq_i(irr), en_i => es_irqs(irr), clr_i => ec_irqs(irr));
+		iedge_inst : aic_edgedet port map( q => q_irqs(irr), clk => clk_bus, rst => rst_i, irq => irq_i(irr), en_i => es_irqs(irr), clr_i => ec_irqs(irr));
 	end generate;
 	rtc_sec <= reg_rtc_sec;
 	rtc_nsec <= reg_rtc_nsec;
@@ -128,12 +137,12 @@ begin
 			end case;
 			case da_state is
 				when db_init =>
-					if event_ack_i = '1' then
+					if event_i.ack = '1' then
 						da_state <= db_int;
 						--yk commented; db_ackcount <= db_ackcount + 1;
 					end if;
 				when db_int =>
-					if event_ack_i = '0' then
+					if event_i.ack = '0' then
 						da_state <= db_init;
 					end if;
 			end case;
@@ -222,7 +231,7 @@ begin
 				end if;
 			end if;
 		end loop;
-		w_irqevent <= '0' & id_irq(high_i) & '0' & c_event_irq & ilevel(high_i) & v_irq(high_i);
+		w_irqevent <= '0' & id_irq(high_i) & '0' & c_event_irq & ilevel(high_i) & vector_numbers(high_i);
 	end process p_priority;
 	pit_event <= '1' when pit_cntr = pit_throttle else
 		     '0';
@@ -317,7 +326,7 @@ begin
 			if s_enmi = '1' then
 				r_nmi <= '1';
 			end if;
-			if event_ack_i = '1' then
+			if event_i.ack = '1' then
 				ec_irqs <= (others => '0');
 				if reg_event(14 downto 12) = c_event_mres then
 					r_mrst <= '0';
@@ -364,6 +373,7 @@ begin
 		if rst_i = '1' then
 			vstate <= v_idle;
 			vnmi <= '0';
+			vcount <= (others => '0');
 		elsif rising_edge(clk_bus) then
 			case vstate is 
 				when v_idle => 

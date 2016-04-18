@@ -2,12 +2,12 @@
 -- Output     Output      Phase    Duty Cycle   Pk-to-Pk     Phase
 -- Clock     Freq (MHz)  (degrees)    (%)     Jitter (ps)  Error (ps)
 ------------------------------------------------------------------------------
--- clk62       62.500      0.000      50.0      212.631    235.448
--- clk_0      125.000      0.000      50.0      172.776    235.448
--- clk_90     125.000     90.000      50.0      172.776    235.448
--- clk_180    125.000    180.000      50.0      172.776    235.448
--- clk_270    125.000    270.000      50.0      172.776    235.448
--- clk31       31.250      0.000      50.0      254.951    235.448
+-- clk250      250.000      0.000      50.0      212.631    235.448
+-- clk125_0    125.000      0.000      50.0      172.776    235.448
+-- clk125_90   125.000     90.000      50.0      172.776    235.448
+-- clk125_180  125.000    180.000      50.0      172.776    235.448
+-- clk125_270  125.000    270.000      50.0      172.776    235.448
+-- clk_cpu 1000/CLK_CPU_DIVIDE  0.000      50.0      254.951    235.448
 --
 ------------------------------------------------------------------------------
 -- Input Clock   Input Freq (MHz)   Input Jitter (UI)
@@ -23,25 +23,23 @@ use ieee.numeric_std.all;
 library unisim;
 use unisim.vcomponents.all;
 
-use work.attr_pack.all;
-
 entity pll_250 is
+generic (
+  CLK_CPU_DIVIDE : natural := 32);
 port
  (-- Clock in ports
-  clk           : in     std_logic;
+  clk        : in  std_logic;
   -- Clock out ports
-  --clk62          : out    std_logic;
-  clk250         : out    std_logic;
-  clk_0          : out    std_logic;
-  clk_90          : out    std_logic;
-  clk_180          : out    std_logic;
-  clk_270          : out    std_logic;
-  clk31          : out    std_logic;
+  clk250     : out std_logic;
+  clk125_0   : out std_logic;
+  clk125_90  : out std_logic;
+  clk125_180 : out std_logic;
+  clk125_270 : out std_logic;
+  clk_cpu    : out std_logic;
   -- Status and control signals
-  reset_o           : out std_logic;
-  locked            : out    std_logic
+  reset_o    : out std_logic;
+  locked     : out std_logic
  );
-  attribute sei_port_global_name of clk : signal is "clock_input";
 end pll_250;
 
 architecture xilinx of pll_250 is
@@ -102,7 +100,7 @@ begin
     CLKOUT4_DIVIDE       => 8,
     CLKOUT4_PHASE        => 270.000,
     CLKOUT4_DUTY_CYCLE   => 0.500,
-    CLKOUT5_DIVIDE       => 32,
+    CLKOUT5_DIVIDE       => CLK_CPU_DIVIDE,
     CLKOUT5_PHASE        => 0.000,
     CLKOUT5_DUTY_CYCLE   => 0.500,
     CLKIN_PERIOD         => 10.0,
@@ -130,42 +128,34 @@ begin
    (O => clkfbout_buf,
     I => clkfbout);
 
-
---  clkout1_buf : BUFG
---  port map
---   (O   => clk62,
---    I   => clkout0);
-
-
   clkout1_buf : BUFG
   port map
    (O   => clk250,
     I   => clkout0);
 
-
   clkout2_buf : BUFG
   port map
-   (O   => clk_0,
+   (O   => clk125_0,
     I   => clkout1);
 
   clkout3_buf : BUFG
   port map
-   (O   => clk_90,
+   (O   => clk125_90,
     I   => clkout2);
 
   clkout4_buf : BUFG
   port map
-   (O   => clk_180,
+   (O   => clk125_180,
     I   => clkout3);
 
   clkout5_buf : BUFG
   port map
-   (O   => clk_270,
+   (O   => clk125_270,
     I   => clkout4);
 
   clkout6_buf : BUFG
   port map
-   (O   => clk31,
+   (O   => clk_cpu,
     I   => clkout5);
 
   process (clkfbout_buf)

@@ -7,23 +7,60 @@
    [clojure.string :as s]
    [baum.core :as baum]))
 
+(defn- remove-by-filter
+  "Returns a function for filtering objects based on a :remove-by key
+  pair"
+  [k vs]
+  (let [vs (set vs)]
+    (cond
+      (nil? k)
+      (fn [x] (not (contains? vs x)))
+      (vector? k)
+      (fn [x] (not (contains? vs (get-in x k))))
+      :else
+      (fn [x] (not (contains? vs (get x k)))))))
+
 (defn- custom-merge [a b]
   (cond
    ;; recursively merge maps
    (and (map? a) (map? b))
-   (->> (merge-with custom-merge a b))
+   (let [a (if-let [rem (:remove b)]
+             ;; support removing specific keys from map a before merge
+             (apply dissoc a rem)
+             a)
+         a (if-let [rem-by (:remove-by b)]
+             ;; support removing items from a based on the value of
+             ;; a key or a seq of keys within each item
+             (reduce
+              (fn [a [k vs]]
+                (filter (remove-by-filter k vs) a))
+              a
+              rem-by)
+             a)
+         b (dissoc b :remove :remove-by)]
+     (->> (merge-with custom-merge a b)))
    ;; concat vectors
    (and (vector? a) (vector? b))  (into a b)
    ;; maps merged into vectors with special {:remove [] :insert {}
    ;; :insert []} command maps
    (and (vector? a) (map? b))
-   (let [{rem :remove :keys [insert append]} b
+   (let [{rem :remove :keys [insert append remove-by]} b
          rem (set rem)
          a
          (->> a
               ;; remove indices in the remove seq
               (map vector (range))
-              (remove #(rem (first %)))
+              (remove #(rem (first %))))
+         ;; remove items from a based on the value of a key or a seq
+         ;; of keys within each item
+         a
+         (reduce
+          (fn [a [k vs]]
+            (filter (comp (remove-by-filter k vs) second) a))
+          a
+          remove-by)
+         a
+         (->> a
               ;; insert values
               (concat insert)
               (sort-by first)

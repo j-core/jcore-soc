@@ -1,0 +1,112 @@
+library ieee;
+
+use ieee.std_logic_1164.all;
+
+use work.cpu2j0_pack.all;
+use work.cpu_core_pack.all;
+
+entity cpumreg is
+  port (
+  clk : in std_logic;
+  rst : in std_logic;
+  -- cpu target port
+  db0_i : in cpu_data_o_t;
+  db1_i : in cpu_data_o_t;
+  -- ram arbitration control
+  ram0_arb_o : in ram_arb_o_t;
+  ram1_arb_o : in ram_arb_o_t;
+  -- cpu target port
+  db0_o : out cpu_data_i_t;
+  db1_o : out cpu_data_i_t;
+  cpu0ram_a_en : out std_logic;
+  cpu1ram_a_en : out std_logic
+);
+end cpumreg;
+
+-- IP information
+-- cpumreg register space = 64 byte adr(7:0) ----------------------------------
+architecture asic of cpumreg is
+
+  register variable this : cpumreg_reg_t reset := CPUMREG_REG_RESET;
+
+begin
+  this : process(this, db0_i, db1_i, ram0_arb_o, ram1_arb_o)
+    register this when clk = '1' and clk'event reset when rst = '1';
+
+  variable nx              : cpumreg_reg_t;
+  variable cpu0ram_a_envar : std_logic;
+  variable cpu1ram_a_envar : std_logic;
+
+  begin -- begin of process
+
+  -- share ram lock state machine ---------------------------------------------
+  case this.state_ramarb is
+  when IDLE =>  if(ram0_arb_o.en = '1') and 
+                  (ram0_arb_o.wr = '0') and 
+                  (ram0_arb_o.lock = '1') then nx.state_ramarb := LOCK0;
+                elsif
+                  (this.cpu1en   = '1') and
+                  (ram1_arb_o.en = '1') and 
+                  (ram1_arb_o.wr = '0') and 
+                  (ram1_arb_o.lock = '1') then nx.state_ramarb := LOCK1;
+                else                           nx.state_ramarb := IDLE; end if;
+  when LOCK0 => if(ram0_arb_o.lock = '1') and
+                  (ram0_arb_o.en = '0') then   nx.state_ramarb := LOCK0;
+                else                           nx.state_ramarb := IDLE; end if;
+  when others => -- "LOCK1"
+                if(ram1_arb_o.lock = '1') and
+                  (ram1_arb_o.en = '0') then   nx.state_ramarb := LOCK1;
+                else                           nx.state_ramarb := IDLE; end if;
+  end case;
+
+  -- ram arbitration -- initial value -----------------------------------------
+                                                        cpu0ram_a_envar := '1';
+                                                        cpu1ram_a_envar :=
+                                                        this.cpu1en;
+                     -- initial value end -------------------------------------
+  case this.state_ramarb is
+  when IDLE => if   (nx.state_ramarb = LOCK0) then      cpu1ram_a_envar := '0';
+               elsif(nx.state_ramarb = LOCK1) then      cpu0ram_a_envar := '0';
+               elsif(ram0_arb_o.en = '1') and 
+                    (ram0_arb_o.wr = '1') then          cpu1ram_a_envar := '0';
+               elsif(this.cpu1en   = '1') and
+                 -- for safety, (write start possib.)
+                    (ram1_arb_o.en = '1') and 
+                    (ram1_arb_o.wr = '1') then          cpu0ram_a_envar := '0';
+                 -- memo: else space = 
+                 -- there is no write, permit both access
+                 -- (with limitation of this.cpu1en)
+               end if;
+  when LOCK0 =>                                         cpu1ram_a_envar := '0';
+  when others =>                                        cpu0ram_a_envar := '0';
+            -- memo: one line above of "= LOCK1"
+  end case;
+
+  -- output signal drive
+  cpu0ram_a_en                                       <= cpu0ram_a_envar ;
+  cpu1ram_a_en                                       <= cpu1ram_a_envar ;
+  -- end of ram arbitration ---------------------------------------------------
+
+  -- cpu1 read select
+    case db1_i.a(7 downto 2) is
+    when b"000000" =>
+      db1_o.d( 0) <= '1';
+    when others =>
+      db1_o.d( 0) <= '0';
+    end case;
+
+  -- cpu0 write
+    if   (db0_i.a(7 downto 2) = b"010000") and
+      (db0_i.en = '1') and (db0_i.wr = '1') then
+      this.cpu1en := db0_i.d(0);
+    end if;
+  -- ff substitute
+    this.state_ramarb := nx.state_ramarb;
+  end process;
+
+  db0_o.d              <= (others => '0');
+  db1_o.d(31 downto 1) <= (others => '0');
+  db0_o.ack            <= db0_i.en;
+  db1_o.ack            <= db1_i.en;
+
+end asic;

@@ -6,7 +6,10 @@
     [errors :as errors]
     [iobufs :as iobufs]
     [devices :as devices]
-    [parse :as parse]]
+    [parse :as parse]
+    c-header
+    device-tree
+    irq]
    [clojure.java.io :as jio]
    [clojure.set :as set]
    [clojure.math.combinatorics :as comb]
@@ -26,7 +29,8 @@
   [(v/lib-clause "ieee")
    StdLogic1164/USE_CLAUSE
    NumericStd/USE_CLAUSE
-   (v/use-clause (str "work.config.all"))])
+   (v/use-clause (str "work.config.all"))
+   (v/use-clause (str "work.clk_config.all"))])
 
 (defn- device-label
   ([dev]
@@ -79,7 +83,7 @@
     (fn [arg & args]
       (apply inst-fn arg thing args))))
 
-(defn- instantiate-device [design device label bus-signals all-ports]
+(defn- instantiate-device [design device label bus-signals all-ports port-overrides generic-overrides ring-elems]
   (if-let [dev-cls (get (:device-classes design) (:class device))]
     (let [entity (:entity dev-cls)
           config-name (or (:configration device) (:configs dev-cls))
@@ -91,22 +95,39 @@
              [[(:id in) (:in bus-signals)]])
            (when-let [out (first (filter #(= :out (:data-bus %)) (vals ports)))]
              [[(:id out) (:out bus-signals)]])
+
+           ;; ring bus in ports
+           (mapcat
+            (fn [port]
+              (let [{:keys [stall word]} (get ring-elems (:id port))]
+                [[(str (:id port) ".stall") (or stall v/std-logic-0)]
+                 [(str (:id port) ".word") (or word (case (:id (:type port))
+                                                      "rbus_8b" (v/constant "IDLE_8B" nil)
+                                                      "rbus_9b" (v/constant "IDLE_9B" nil)))]]))
+            (filter #(and (:ring-bus %) (= (:dir %) :in)) (vals ports)))
+
+           ;; ring bus out ports
+           (->> (vals ports)
+                (filter #(and (:ring-bus %) (= (:dir %) :out)))
+                (mapcat
+                 (fn [port]
+                   (let [{:keys [stall word]} (get ring-elems (:id port))]
+                     [(when stall [(str (:id port) ".stall") stall])
+                      (when word [(str (:id port) ".word") word])])))
+                (filter identity))
+
            (instantiate-ports design {:type :device :id (:name device)} (:ports device) all-ports)
-           (if-let [irqs-port (:signal (get all-ports "irqs"))]
-             (let [irq (:irq device)]
-               (->> ports
-                    (filter (comp :irq? val))
-                    (map
-                     (fn [[name port]]
-                       [name (if irq (v/array-elem irqs-port irq))]))))))
+
+           port-overrides)
 
           ;; determine ports that are unassigned
-          missing-ports (set/difference (apply hash-set (keys (:ports entity)))
+          check-ports (remove :ring-bus (vals (:ports entity)))
+          missing-ports (set/difference (apply hash-set (map :id check-ports))
                                         (apply hash-set (map first port-assigns)))
           inst ((instantiate-factory dev-cls)
                 label
-                (sort port-assigns)
-                (sort (:user-generics device)))]
+                (sort-by first port-assigns)
+                (sort-by first (merge (:user-generics device) generic-overrides)))]
       (when (seq missing-ports)
         (let [port-list (s/join ", " missing-ports)]
           (errors/add-warning (str "Missing ports for device " label ": " port-list))
@@ -132,7 +153,67 @@
   (let [s (Long/toString x 2)]
     (str (apply str (repeat (- n (.length s)) \0)) s)))
 
-(defn- create-decode-fn [devices-enum devices-literals devices device-classes]
+(defn- device-addr-prefixes
+  "Returns a map from device name to a string like
+  \"1010101111100000\" which is the left-most bits of the data address
+  that must match to select the device.
+
+  If the simple? is true, the returned addresses strings are
+  simplified by removing trailing, right-most bits that don't serve to
+  distinguish between devices. This allows the address decoding logic
+  to consider fewer bits in the address, but means devices can be
+  mirrored in adjacent parts of memory."
+
+  [devices device-classes simple?]
+  (let [prefixes
+        (->> devices
+             (map (fn [dev]
+                    (let [addr (zero-pad-bin (:base-addr dev) 32)
+                          ;; remove trailing bits that are used inside the
+                          ;; device and not to distinguish between devices
+                          left-bit (:left-addr-bit (get device-classes (:class dev)))
+                          ;; left-bit is the left-most bit used by the
+                          ;; device, so left-bit + 1 is the number of bits
+                          ;; that don't distinguish between devices
+                          addr (.substring addr 0 (- 32 left-bit 1))]
+                      [(:name dev) addr])))
+             (filter identity)
+             (into {}))]
+    (if simple?
+      ;; simplify by removing trailing bits that don't distinguish
+      ;; between devices
+      (letfn [(trim-suffix [full-prefix prefix node]
+                (cond
+                  (string? node)
+                  {:name node :prefix full-prefix}
+
+                  (= 1 (count node))
+                  (let [[k n] (first node)]
+                    (trim-suffix full-prefix (str prefix k) n))
+
+                  :else
+                  (->> node
+                       (map (fn [[k n]]
+                              [(str prefix k) (trim-suffix (str full-prefix prefix k) "" n)]))
+                       (into {}))))]
+        (let [trie
+              (reduce
+               (fn [trie [name addr]]
+                 (assoc-in trie addr name))
+               {}
+               prefixes)]
+
+          (->>
+           (trim-suffix "" "" trie)
+           (tree-seq
+            #(not (contains? % :name))
+            vals)
+           (filter :name)
+           (map (juxt :name :prefix))
+           (into {}))))
+      prefixes)))
+
+(defn- create-decode-fn [devices-enum devices-literals devices device-classes device-prefixes]
   (let [addr (v/variable "addr" (v/std-logic-vector 32))]
     (letfn [(extract-prefix
               ;; Simplifies a trie by removing all the outer maps that
@@ -159,11 +240,24 @@
             (build-ifs [offset trie]
               (let [index (- 31 offset)]
                 (if (:name trie)
-                  (v/return-stmt (get devices-literals (:name trie)))
+                  (v/set-comments
+                   (v/return-stmt (get devices-literals (:name trie)))
+                   (format "%08X-%08X"
+                           (:base-addr trie)
+                           (+ (:base-addr trie)
+                              (dec (bit-shift-left 2 (:left-addr-bit trie))))))
                   (let [[left-prefix left-trie] (extract-prefix (dissoc trie \1))
                         [right-prefix right-trie] (extract-prefix (dissoc trie \0))
-                        check-left (if (:name left-trie) "0" left-prefix)
-                        check-right (if (:name right-trie) "1" right-prefix)]
+                        check-left left-prefix
+                        check-right right-prefix
+                        ;; Add the following two lines to simplify the
+                        ;; decode logic and only include enough tests
+                        ;; to differentiate between devices in this
+                        ;; design. However, this can mirror the same
+                        ;; device in memory multiple times.
+                        ;;check-left (if (:name left-trie) "0" left-prefix)
+                        ;;check-right (if (:name right-trie) "1" right-prefix)
+                        ]
                     (if (and (= check-left "0") (= check-right "1"))
                       ;; avoid unnecessary elsif for simple if 0 or 1 test
                       (v/if-stmt
@@ -196,16 +290,22 @@
       (let [trie
             (reduce
              (fn [trie dev]
-               (assoc-in trie (zero-pad-bin (:base-addr dev) 32) dev))
+               (assoc-in trie (get device-prefixes (:name dev))
+                         (-> dev
+                             (select-keys [:name :base-addr])
+                             (assoc :left-addr-bit
+                                    (:left-addr-bit (get device-classes (:class dev)))))))
              {}
-             (vals devices))
-            base-addrs (map (juxt :name :base-addr) (vals devices))
+             devices)
+            ;;_ (clojure.pprint/pprint trie)
+
+            base-addrs (map (juxt :name :base-addr) devices)
 
             [prefix trie] (extract-prefix trie)
             ]
-        ;;(println "PREFIX:" prefix)
+        ;;(println "PREFIX:\n" \" prefix \")
         ;;(print-ifs (.length prefix) trie)
-        #_(doseq [dev (sort-by :base-addr (vals devices))]
+        #_(doseq [dev (sort-by :base-addr devices)]
           (println (zero-pad-bin (:base-addr dev) 32) (:name dev)))
 
         (let [func
@@ -221,6 +321,33 @@
                               "Address decoding closer to CPU checks those bits.")
                              (v/return-stmt (first (.getLiterals devices-enum)))))]
           func)))))
+
+(defn- create-device-enables-fn [enables-type devices-literals devices device-classes device-prefixes]
+  (let [addr (v/variable "addr" (v/std-logic-vector 32))
+        enables (v/variable "enables" enables-type (v/agg-others (v/std-logic-literal 0)))
+        device-by-name (into {} (map (fn [dev] [(:name dev) dev]) devices))
+        assigns
+        (map (fn [[name enum-val]]
+               (let [assign
+                     (v/varassign (v/array-elem enables enum-val) (v/std-logic-literal 1))]
+                 (if-let [dev (device-by-name name)]
+                   (let [prefix (.substring (get device-prefixes name) 4)]
+                     (v/if-stmt
+                      (v/v= (v/slice-downto addr 27 (- 28 (.length prefix)))
+                            (v/literal prefix))
+                      assign))
+                   assign)))
+             devices-literals)]
+    (let [func
+          (-> (v/func-body "decode_device_enables" enables-type [(v/id addr) (.getType addr)])
+              (v/add-declarations [enables])
+              (v/add-all v/statements
+                         (v/set-comments
+                          assigns
+                          "Assumes addr(31 downto 28) = x\"a\"."
+                          "Address decoding closer to CPU checks those bits.")
+                         (v/return-stmt enables)))]
+      func)))
 
 (defn- filter-signal-ports
   "Return a map of ports that match a given context in the signals"
@@ -239,20 +366,105 @@
             (map (fn [p] [(:id (:port p)) p]))
             (into {})))))
 
-(defn- generate-devices [design]
+(defn- generate-periph-bus-muxes [design]
   (let [global-signals (:global-signals design)
+        internal-ports (filter-signal-ports global-signals :device "_internal")
+        ports
+        (reduce
+         (fn [ports bus]
+           (assoc ports bus
+                  (zipmap
+                   [:out :in]
+                   (map (comp :signal :port internal-ports)
+                        [(str bus "_periph_dbus_i") (str bus "_periph_dbus_o")]))))
+         {}
+         (keys (:peripheral-buses design)))
 
-        ;; data bus and irqs ports are special signals created on an
-        ;; _internal device. Pull them out to assign directly.
-        [data-out-port data-in-port
-         cpu1-out-port cpu1-in-port
-         irqs-port]
-        (map #(:port (get (filter-signal-ports global-signals :device "_internal") %))
-             ["cpu0_periph_dbus_i" "cpu0_periph_dbus_o"
-              "cpu1_periph_dbus_i" "cpu1_periph_dbus_o"
-              "irqs"])
 
-        devices (:devices design)
+        {connected true
+         disconnected false}
+        (group-by val (:peripheral-buses design))
+
+        connected (set (map first connected))
+        disconnected (set (map first disconnected))
+
+        create-bus-signals
+        (fn [bus]
+          (let [{:keys [in out]} (val (first ports))]
+            {:out  (v/signal (str bus "_periph_dbus_i") (.getType out))
+             :in (v/signal (str bus "_periph_dbus_o") (.getType in))}))
+
+        mux-architectures
+        (group-by :entity
+                  (filter #(and (= :architecture (:type %))
+                                (.startsWith (:entity %) "multi"))
+                          (:vhdl-data design)))
+
+        instantiate-mux
+        (fn [label arch m1 m2 slave]
+          (v/instantiate-arch
+           label
+           (v/libify-arch (v/vobj (first (mux-architectures arch))) "work")
+           [["clk" (:signal (global-signals "clk_sys"))]
+            ["rst" (:signal (global-signals "reset"))]
+            ["m1_i" (:out m1)]
+            ["m1_o" (:in m1)]
+            ["m2_i" (:out m2)]
+            ["m2_o" (:in m2)]
+            ["slave_i" (:out slave)]
+            ["slave_o" (:in slave)]]))
+
+        muxes {:master-bus (ports "cpu0")
+               :statements []
+               :decls []}
+        muxes
+        (if (set/superset? connected #{"cpu0" "cpu1"})
+          (let [bus (create-bus-signals "cpu01")]
+            (-> muxes
+                (assoc :master-bus bus)
+                (update-in [:decls] into (vals bus))
+                (update-in [:statements] conj
+                           (instantiate-mux
+                            "cpus_mux"
+                            "multi_master_bus_mux"
+                            (:master-bus muxes)
+                            (ports "cpu1")
+                            bus))))
+          muxes)
+        muxes
+        (if (connected "dmac")
+          (let [bus (create-bus-signals "cpudm")]
+            (-> muxes
+                (assoc :master-bus bus)
+                (update-in [:decls] into (vals bus))
+                (update-in [:statements] conj
+                           (instantiate-mux
+                            "dmac_mux"
+                            "multi_master_bus_muxff"
+                            (:master-bus muxes)
+                            (ports "dmac")
+                            bus))))
+          muxes)
+        ;; loop back the disconnected buses
+        muxes
+        (update-in muxes [:statements] conj
+                   (v/set-comments
+                    (map
+                     (fn [bus]
+                       (v/cond-assign (:out (ports bus))
+                                      (v/func-call-pos
+                                       (v/func-dec "loopback_bus" v/std-logic)
+                                       (:in (ports bus)))))
+                     disconnected)
+                    "Disconnected peripheral buses"))]
+    muxes))
+
+(defn- generate-devices [design desc]
+  (let [global-signals (:global-signals design)
+        pbus-mux
+        (generate-periph-bus-muxes design)
+        
+        devices (merge (:devices design) (:extra-devices desc))
         device-classes (:device-classes design)
         entity
         (reduce
@@ -266,40 +478,86 @@
 
         rb-8b-array
         (v/unconstrained-array "bus_array_8b"
-                               (v/enum-type "rbus_word_8b")
+                               (v/enum-type "rbus_8b")
                                [Standard/INTEGER])
         rb-9b-array
         (v/unconstrained-array "bus_array_9b"
-                               (v/enum-type "rbus_word_9b")
+                               (v/enum-type "rbus_9b")
                                [Standard/INTEGER])
         ;; create ring signals
         rings
         (->> (:rings design)
              (map-indexed
-              (fn [ring-i [ring-name ring]]
-                (let [n (count (:nodes ring))
-                      bus-range (v/range-to 0 n)]
-                  [ring-name
-                   (assoc ring
-                     :data-sig
-                     (v/signal (s/join "_" ["bus" (name ring-name) "data"])
-                               (v/index-subtype-indication
-                                (case (:width ring)
-                                  8 rb-8b-array
-                                  9 rb-9b-array)
-                                [bus-range]))
-                     :stall-sig
-                     (v/signal (s/join "_" ["bus" (name ring-name) "stall"])
-                               (v/std-logic-vector bus-range)))])))
-             (into {}))
+              (fn [ring-i {:keys [bus-width ring]}]
+                (let [bus-range (v/range-to 0 (count ring))
+                      sig (v/signal (str "rbus_" ring-i)
+                                    (v/index-subtype-indication
+                                     (case bus-width
+                                       8 rb-8b-array
+                                       9 rb-9b-array)
+                                     [bus-range]))
+                      ring-elems
+                      (->>
+                       ring
+                       (mapcat
+                        (fn [i {:keys [device ports]}]
+                          (let [{:keys [in out]} ports
+                                bus (v/array-elem sig i)
+                                bus-next (v/array-elem sig (inc i))]
+                            [[[device (:id out) :stall]
+                              (v/rec-elem bus "stall")]
+                             [[device (:id in) :word]
+                              (v/rec-elem bus "word")]
+                             [[device (:id in) :stall]
+                              (v/rec-elem bus-next "stall")]
+                             [[device (:id out) :word]
+                              (v/rec-elem bus-next "word")]]))
+                        (range))
+                       (into {}))]
+                  {:ring-index ring-i
+                   :signals [sig]
+                   ;; set the stall and word signals at the extremes
+                   ;; of the ring bus
+                   :stmts [(v/cond-assign
+                            (v/rec-elem
+                             (v/array-elem sig 0)
+                             "word")
+                            (v/constant (case bus-width
+                                          8 "IDLE_8B"
+                                          9 "IDLE_9B") nil))
+                           (v/cond-assign
+                            (v/rec-elem
+                             (v/array-elem sig (count ring))
+                             "stall")
+                            v/std-logic-0)]
+;;                   :devices devs
+                   :ring-elems ring-elems}))))
+
+        ring-elems
+        (reduce
+         (fn [elems [k v]]
+           (assoc-in elems k v))
+         {}
+         (mapcat :ring-elems rings))
 
         ;; data bus support
-        dev-names (apply vector "none" (sort (keys devices)))
+        ;; ignore devices without data bus ports
+        data-bus-devices
+        (filter #(:data-bus (:entity (device-classes (:class %)))) (vals devices))
+
+        dev-names
+        (->> data-bus-devices
+             (map :name)
+             sort
+             (apply vector "none"))
         devices-enum (apply v/enum-type "device_t"
                             (s/upper-case (first dev-names))
                             (map #(s/upper-case (str "DEV_" %)) (rest dev-names)))
         device-literals (zipmap dev-names (.getLiterals devices-enum))
-
+        enables-type (v/constrained-array "data_bus_enables_t" v/std-logic
+                                          [(v/range-to (v/attr devices-enum "left")
+                                                       (v/attr devices-enum "right"))])
+        dev-enables (v/signal "dev_enables" enables-type)
         [decls
          bus-signals]
         (let [in-type (v/constrained-array "data_bus_i_t" (v/sub-type "cpu_data_i_t" nil)
@@ -314,8 +572,14 @@
            {:in in-bus
             :out out-bus}])
 
-        decode-fn (create-decode-fn devices-enum device-literals devices device-classes)
-
+        device-prefixes (device-addr-prefixes data-bus-devices device-classes
+                                              (case (get-in design [:system :data-bus-decode] :simple)
+                                                :simple true
+                                                :exact false))
+        decode-fn (create-decode-fn devices-enum device-literals data-bus-devices
+                                    device-classes device-prefixes)
+        enables-fn (create-device-enables-fn enables-type device-literals data-bus-devices
+                                             device-classes device-prefixes)
         devices
         (->>
          devices
@@ -325,40 +589,52 @@
                 [dev-literal (get device-literals name)
                  ;; flip in/out to be relative to device
                  bus-signals
-                 {:out (v/array-elem (:in bus-signals) dev-literal)
-                  :in (v/array-elem (:out bus-signals) dev-literal)}]
+                 (when dev-literal
+                   {:out (v/array-elem (:in bus-signals) dev-literal)
+                    :in (v/array-elem (:out bus-signals) dev-literal)})]
               [name
                (assoc dev
                  :inst (instantiate-device design dev
                                            (device-label dev)
-                                           bus-signals global-signals))])))
+                                           bus-signals
+                                           global-signals
+                                           (get (:port-overrides desc) name)
+                                           (get (:generic-overrides desc) name)
+                                           (get ring-elems (:name dev))))])))
          (into {}))
 
-        loopback-bus (v/func-dec "loopback_bus" (.getType (:signal cpu1-in-port)))
         active-dev (v/signal "active_dev" devices-enum)
+
         arch
         (-> (v/architecture "impl" entity)
             (v/add-declarations
              (map
               (comp :signal global-signals)
               (:devices (:signal-locations design)))
-             ;;[rb-8b-array rb-9b-array]
-             #_(v/set-comments
-              (mapcat
-               (juxt :data-sig :stall-sig)
-               (vals rings))
-              "ring bus signals -- Currently unused until devices are connected by ring bus")
+             (:decls pbus-mux)
+             (when-let [ring-sigs (seq (mapcat :signals rings))]
+               (concat
+                [rb-8b-array rb-9b-array]
+                ring-sigs))
              [devices-enum
-              active-dev]
+              active-dev
+              #_enables-type
+              #_dev-enables]
              decls
-             [decode-fn])
+             [decode-fn
+              #_enables-fn]
+             (:declarations desc))
             (v/add-all v/statements
+                       (:statements pbus-mux)
                        (v/set-comments
                         [(v/cond-assign active-dev
                                         (v/func-call-pos decode-fn
-                                                         (v/rec-elem (:signal data-in-port) "a")))
-                         (v/cond-assign (:signal data-out-port)
+                                                         (v/rec-elem (:in (:master-bus pbus-mux)) "a")))
+                         (v/cond-assign (:out (:master-bus pbus-mux))
                                         (v/array-elem (:in bus-signals) active-dev))
+                         #_(v/cond-assign dev-enables
+                                        (v/func-call-pos enables-fn
+                                                         (v/rec-elem (:in (:master-bus pbus-mux)) "a")))
                          (let [dev (v/constant "dev" nil)]
                            (-> (v/for-gen "bus_split" "dev" (v/range-to (v/attr devices-enum "left")
                                                                         (v/attr devices-enum "right")))
@@ -367,26 +643,23 @@
                                                          (v/func-call-pos
                                                           (v/func-dec "mask_data_o"
                                                                       StdLogic1164/STD_LOGIC)
-                                                          (:signal data-in-port)
+                                                          (:in (:master-bus pbus-mux))
                                                           (v/func-call-pos
-                                                           (v/func-dec "to_bit"
-                                                                       StdLogic1164/STD_LOGIC)
-                                                           (v/v= dev
-                                                                 active-dev)))))))]
+                                                             (v/func-dec "to_bit"
+                                                                         StdLogic1164/STD_LOGIC)
+                                                             (v/v= dev
+                                                                   active-dev))
+                                                          #_(v/array-elem dev-enables dev))))))]
                         "multiplex data bus to and from devices")
-                       (v/set-comments
-                        (v/cond-assign (:signal cpu1-out-port)
-                                       (v/func-call-pos
-                                        loopback-bus
-                                        (:signal cpu1-in-port)))
-                        "second CPU's bus is not used currently")
                        (let [none (get device-literals "none")]
                          (v/cond-assign
                           (v/array-elem (:in bus-signals) none)
                           (v/func-call-pos
-                           loopback-bus
+                           (v/func-dec "loopback_bus" (.getType (:out bus-signals)))
                            (v/array-elem (:out bus-signals) none))))
-                       (map :stmt (mapcat :nodes (vals rings)))
+                       (v/set-comments
+                        (mapcat :stmts rings)
+                        "Set stall and word signals at the ends of ring buses")
                        (v/set-comments
                         (map (comp :inst val)
                              (sort-by
@@ -399,17 +672,7 @@
                               devices))
                         "Instantiate devices")
 
-                       ;; determine which irqs aren't assigned and
-                       ;; assign '0' to them
-                       (when irqs-port
-                         (v/set-comments
-                          (map
-                           #(v/cond-assign
-                             (v/array-elem (:signal irqs-port) %)
-                             StdLogic1164/STD_LOGIC_0)
-                           (sort (set/difference (set (range (:num-irq (meta irqs-port))))
-                                                 (set (filter identity (map :irq (vals devices)))))))
-                          "Ununsed irqs"))))]
+                       (:statements desc)))]
 
     [(assoc design
        :device-entity entity
@@ -421,26 +684,27 @@
                  (sort
                   (distinct
                    (concat
-                    [#_"ring_bus_pack" "data_bus_pack"]
+                    ["data_bus_pack"]
                     (mapcat
                      #(mapcat :pkgs (vals (:ports %)))
                      (vals devices))))))
                 entity
                 arch)]))
 
-(defn generate-top [design]
+(defn generate-top [design desc]
   (let [global-signals (:global-signals design)
 
         instantiations
-        (map
-         (fn [[label entity]]
-           ((instantiate-factory entity)
-            label
-            (sort
-             (instantiate-ports design {:type :top :id label}
-                                (:ports entity) global-signals))
-            (sort (:user-generics entity))))
-         (:top-entities design))
+        (->> (:top-entities design)
+             (sort)
+             (map
+              (fn [[label entity]]
+                ((instantiate-factory entity)
+                 label
+                 (sort
+                  (instantiate-ports design {:type :top :id label}
+                                     (:ports entity) global-signals))
+                 (sort (:user-generics entity))))))
         
         devices-inst
         (v/instantiate-arch
@@ -492,31 +756,7 @@
 (defn- pad-space-right [^String s len]
   (str s (s/join (repeat (- len (.length s)) \ ))))
 
-(defn- create-tsmc-io-components []
-  (v/set-comments
-   (for [drive-strength ["0204" "0408" "0812" "1216"]
-         pull-up [true false]
-         schmitt [true false]
-         slew-rate [true false]]
-     (-> (v/component (str "P"
-                           (if slew-rate "R" "D")
-                           (if pull-up "U" "D")
-                           "W"
-                           drive-strength
-                           (when schmitt "S")
-                           "CDG"))
-         (v/add-in-ports
-          (map #(v/signal % v/std-logic)
-               ["DS" "OEN" "I" "PE" "IE"]))
-         (v/add-out-ports
-          (map #(v/signal % v/std-logic)
-               ["C"]))
-         (v/add-inout-ports
-          (map #(v/signal % v/std-logic)
-               ["PAD"]))))
-   "TSMC I/O Cells"))
-
-(defn generate-pad-ring [design]
+(defn generate-pad-ring [design desc]
   (let [global-signals (:global-signals design)
         context-sets (:context-sets design)
         pins (:pins (:pins design))
@@ -810,11 +1050,7 @@
         entity
         (reduce
          (fn [entity pin]
-           ((case (if (= (:target design) :tsmc)
-                    ;; treat all pins as inout for asic because IO
-                    ;; cell PAD is inout
-                    :inout
-                    (:dir pin))
+           ((case (:dir pin)
               :in v/add-in-ports
               :out v/add-out-ports
               :inout v/add-inout-ports
@@ -856,8 +1092,6 @@
         (-> (v/architecture "impl" entity)
             (v/add-declarations
              pin-attrs
-             (when (= (:target design) :tsmc)
-               (create-tsmc-io-components))
              (v/set-comments
               (->> (vals (:padring-entities design))
                    (filter :instantiate-component?)
@@ -880,9 +1114,8 @@
                        iobufs))
 
         uses (concat
-              (when-not (= (:target design) :tsmc)
-                [(v/lib-clause "unisim")
-                 (v/use-clause "unisim.vcomponents.all")]))]
+              [(v/lib-clause "unisim")
+               (v/use-clause "unisim.vcomponents.all")])]
 
     [design
      (v/add-all (v/vhdl-file) v/elements
@@ -1025,9 +1258,27 @@ whehter they are in or out ports."
         design (categorize-signals design)]
     design))
 
+(def hdr-comment
+  ["******************************************************************"
+   "******************************************************************"
+   "******************************************************************"
+   "This file is generated by soc_gen and will be overwritten next time"
+   "the tool is run. See soc_top/README for information on running soc_gen."
+   "******************************************************************"
+   "******************************************************************"
+   "******************************************************************"])
+
 (defn spit-vhdl [f content]
   (with-open [w (jio/writer f)]
     (VhdlOutput/toWriter content w)))
+
+(defn- create-plugin [name]
+  (case name
+    "device_tree" (soc-gen.device-tree/->DeviceTreePlugin)
+    "board.h" (soc-gen.c-header/->CHeaderPlugin)
+    "aic1" (soc-gen.irq/->AIC1Plugin)
+    "aic2" (soc-gen.irq/->AIC2Plugin)
+    nil))
 
 (defn generate-design [design directory]
   (let [directory (jio/file directory)]
@@ -1039,24 +1290,112 @@ whehter they are in or out ports."
     (when-not (or (.isDirectory directory) (.mkdirs directory))
       (throw (Exception. (str "Cannot store design. Cannot create directory "
                               (.getPath directory)))))
+
     ;; TODO: should we delete existing files in the directory?
     (errors/wrap-errors
-     (let [design (preprocess-design design)
+     (let [plugins
+           (reduce
+            (fn [plugins n]
+              (if-let [p (create-plugin n)]
+                (conj plugins p)
+                (do
+                  (errors/add-error (str "Unknown plugin name \"" n "\""))
+                  plugins)))
+            []
+            (:plugins design))
+           _ (when (errors/dump)
+               (throw (Exception. "Cannot instantiate plugins.")))
 
-           [design devices-vhd] (generate-devices design)
-           [design top-vhd] (generate-top design)
-           [design pad-vhd] (generate-pad-ring design)
+           design (preprocess-design design)
+
+           ;; call pregen on all plugins
+           [plugins design]
+           (reduce
+            (fn [[plugs design] p]
+              (let [[p design] (soc-gen.plugins/on-pregen p design)]
+                [(conj plugs p) design]))
+            [[] design]
+            plugins)
+
+           _ (when (errors/dump)
+               (throw (Exception. "Plugin failed.")))
+
+           plugin-gen
+           (fn [plugins design file-id file-desc]
+             (reduce
+              (fn [desc p]
+                (soc-gen.plugins/on-generate p design file-id desc))
+              file-desc
+              plugins))
+
+           desc (plugin-gen plugins design :devices
+                            {:port-overrides {}
+                             :generic-overrides {}
+                             :declarations []
+                             :statements []
+                             :extra-devices {}})
+           [design devices-vhd] (generate-devices design desc)
+
+           desc (plugin-gen plugins design :top {})
+           [design top-vhd] (generate-top design desc)
+
+           desc (plugin-gen plugins design :pad-ring {})
+           [design pad-vhd] (generate-pad-ring design desc)
+
            files {"devices.vhd" devices-vhd
                   "soc.vhd" top-vhd
                   "pad_ring.vhd" pad-vhd}]
+
+       (doseq [[name content] files]
+         (if content
+           (apply v/set-comments (seq (v/elements content)) hdr-comment)))
        (doseq [[name content] files]
          (if content
            (do
              (println "Writing" name)
              (spit-vhdl (jio/file directory name) content))
            (errors/add-warning (str "Failed to generate " name))))
-       (let [f "build.mk"]
-         (println "Writing" f)
-         (spit (jio/file directory f)
-               (s/join (mapcat vector (map #(str "$(VHDLS) += " %) (keys files)) (repeat "\n"))))))
+
+       ;; allow plugins to generate files
+       (let [extra-files
+             (reduce
+              (fn [files plugin]
+                (into
+                 files
+                 (for [{file-id :id file-name :name
+                        :as desc}
+                       (soc-gen.plugins/file-list plugin)]
+
+                   (let [desc (plugin-gen plugins design file-id file-name)]
+                     {:id file-id
+                      :name file-name
+                      :buildmk? (get desc :buildmk? false)
+                      :content
+                      (soc-gen.plugins/file-contents plugin design file-id desc)}))))
+              []
+              plugins)]
+
+         (doseq [{file-name :name
+                  content :content} extra-files]
+           (if content
+             (do
+               (println "Writing" file-name)
+               (spit (jio/file directory file-name) content))
+             (errors/add-warning (str "Failed to generate " file-name))))
+
+         (let [f "build.mk"]
+           (println "Writing" f)
+           (spit (jio/file directory f)
+                 (s/join
+                  "\n"
+                  (concat
+                   ["# This file is generated by soc_gen and will be overwritten next time"
+                    "# the tool is run. See soc_top/README for information on running soc_gen."]
+                   (map #(str "$(VHDLS) += " %)
+                        (concat
+                         (keys files)
+                         (map :name
+                              (filter :buildmk? extra-files))))
+                   ;; empty string to get final \n
+                   [""]))))))
      (not (errors/dump)))))

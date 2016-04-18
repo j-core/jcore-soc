@@ -11,7 +11,7 @@ package cpu_core_pack is
     DEV_DDR,
     DEV_SRAM,
     DEV_PERIPH,
-    DEV_AIC);
+    DEV_CPU);
   type core_data_bus_i_t is array(core_data_bus_device_t'left to core_data_bus_device_t'right)
     of cpu_data_i_t;
   type core_data_bus_o_t is array(core_data_bus_device_t'left to core_data_bus_device_t'right)
@@ -25,6 +25,22 @@ package cpu_core_pack is
     of cpu_instruction_i_t;
   type core_instr_bus_o_t is array(core_instr_bus_device_t'left to core_instr_bus_device_t'right)
     of cpu_instruction_o_t;
+
+  type cpumreg_state_t is ( IDLE, LOCK0, LOCK1 );
+
+  type ram_arb_o_t is record
+    en : std_logic;
+    wr : std_logic;
+    lock : std_logic;
+  end record;
+
+  type cpumreg_reg_t is record
+    cpu1en : std_logic;
+    state_ramarb : cpumreg_state_t;
+  end record;
+
+  constant CPUMREG_REG_RESET : cpumreg_reg_t := (
+    '0' , IDLE );
 
   function decode_core_data_addr(addr : std_logic_vector(31 downto 0))
     return core_data_bus_device_t;
@@ -45,6 +61,44 @@ package cpu_core_pack is
     selected        : in  core_instr_bus_device_t;
     signal slaves_i : in  core_instr_bus_i_t;
     signal slaves_o : out core_instr_bus_o_t);
+
+  component cpumreg is port (
+    clk : in std_logic;
+    rst : in std_logic;
+    -- cpu target port
+    db0_i : in cpu_data_o_t;
+    db1_i : in cpu_data_o_t;
+    -- ram arbitration control
+    ram0_arb_o : in ram_arb_o_t;
+    ram1_arb_o : in ram_arb_o_t;
+    -- cpu target port
+    db0_o : out cpu_data_i_t;
+    db1_o : out cpu_data_i_t;
+    cpu0ram_a_en : out std_logic;
+    cpu1ram_a_en : out std_logic);
+  end component;
+
+  component cpu_core is
+    port (
+      clk : in std_logic;
+      rst : in std_logic;
+
+      instr_bus_o : out instr_bus_o_t;
+      instr_bus_i : in  instr_bus_i_t;
+
+      data_bus_lock : out std_logic;
+      data_bus_o    : out data_bus_o_t;
+      data_bus_i    : in  data_bus_i_t;
+
+      debug_o : out cpu_debug_o_t;
+      debug_i : in  cpu_debug_i_t;
+
+      event_o : out cpu_event_o_t;
+      event_i : in  cpu_event_i_t;
+
+      data_master_en : out std_logic;
+      data_master_ack : out std_logic);
+  end component;
 end package;
 
 package body cpu_core_pack is
@@ -68,9 +122,13 @@ package body cpu_core_pack is
         return DEV_DDR;
       when x"a" =>
         case addr(27 downto 8) is
-          when x"bcd02" =>
-            return DEV_AIC;
+          -- This address, 0xabcd0600-0xabcd06ff, is hard-coded in soc_gen as an already
+          -- used address range. If you change this, change soc_gen too.
+          when x"bcd06" =>
+            return DEV_CPU;
           when others =>
+            -- The restriction that peripheral addresses start with 0xa is
+            -- hard-coded in soc_gen. If you change this, change soc_gen too.
             return DEV_PERIPH;
         end case;
       when others =>

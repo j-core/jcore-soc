@@ -1,0 +1,12 @@
+;; Additional children added to the soc node in the device tree.
+;; TODO: need to parameterize these values somehow...
+{:dt-children
+  [#_["cpustart"
+    {:properties
+     [[:compatible "jcore,j2-soc-cpustart-0.1"]
+      [:reg {:fmt :hex :v (0x600 0x100)}]]}]
+   ["timer"
+    {:properties
+     [[:compatible "jcore,soc-pit-0.1"]
+      [:reg {:fmt :hex :v (0x200 0x30)}]
+      [:cpu-offset {:fmt :hex :v (0x300)}]]}]]}

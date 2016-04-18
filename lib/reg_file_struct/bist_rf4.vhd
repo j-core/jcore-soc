@@ -1,0 +1,113 @@
+-- async / sync 4R sync 1W register file with bist wrapper
+-- modeled from datasheet parameters
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+use work.rf_pack.all;
+use work.bist_pack.all;
+
+entity bist_RF4 is
+   generic ( sync : boolean := false;
+             lhqd : boolean := false;
+             WIDTH : natural range 1 to 32;
+             DEPTH : natural range 1 to 32 );
+   port (
+   clk: in  std_logic;
+   rst: in  std_logic;
+   bi : in  bist_scan_t;
+   bo : out bist_scan_t;
+   D  : in  std_logic_vector(WIDTH-1 downto 0);
+   WA : in  integer range 0 to DEPTH-1;
+   WE : in  std_logic;
+   RA0: in  integer range 0 to DEPTH-1;
+   Q0 : out std_logic_vector(WIDTH-1 downto 0);
+   RA1: in  integer range 0 to DEPTH-1;
+   Q1 : out std_logic_vector(WIDTH-1 downto 0);
+   RA2: in  integer range 0 to DEPTH-1;
+   Q2 : out std_logic_vector(WIDTH-1 downto 0);
+   RA3: in  integer range 0 to DEPTH-1;
+   Q3 : out std_logic_vector(WIDTH-1 downto 0));
+begin
+  assert WIDTH <= 32 report "bist command supports max width of 32" severity failure;
+end bist_RF4;
+
+architecture bist of bist_RF4 is
+
+signal wd   : std_logic_vector(WIDTH-1 downto 0);
+signal sa   : integer range 0 to DEPTH-1;
+signal se   : std_logic;
+signal a0   : integer range 0 to DEPTH-1;
+signal rq0  : std_logic_vector(WIDTH-1 downto 0);
+signal a1   : integer range 0 to DEPTH-1;
+signal rq1  : std_logic_vector(WIDTH-1 downto 0);
+signal a2   : integer range 0 to DEPTH-1;
+signal rq2  : std_logic_vector(WIDTH-1 downto 0);
+signal a3   : integer range 0 to DEPTH-1;
+signal rq3  : std_logic_vector(WIDTH-1 downto 0);
+signal fbq  : std_logic_vector(WIDTH-1 downto 0);
+signal ba   : integer range 0 to DEPTH-1;
+signal bp   : integer range 0 to 3;
+signal be   : std_logic;
+signal bq   : std_logic;
+signal bc   : bist_cmd_t;
+
+signal ctrl : std_logic_vector(7 downto 0);
+
+begin
+   -- The BIST multiplexors
+   wd <= D   when bi.bist = '0' else bi.d & fbq(WIDTH-1 downto 1);
+   sa <= WA  when bi.bist = '0' else ba;
+   se <= WE  when bi.bist = '0' else be;
+   a0 <= RA0 when bi.bist = '0' or bp /= 0 else ba;
+   a1 <= RA1 when bi.bist = '0' or bp /= 1 else ba;
+   a2 <= RA2 when bi.bist = '0' or bp /= 2 else ba;
+   a3 <= RA3 when bi.bist = '0' or bp /= 3 else ba;
+
+   -- The register file and write registers
+   rf : RF4 generic map( sync => sync, lhqd => lhqd,
+                         WIDTH => WIDTH, DEPTH => DEPTH )
+            port    map( clk => clk, rst => rst, D => wd, WA => sa, WE => se,
+                         RA0 => a0, Q0 => rq0,
+                         RA1 => a1, Q1 => rq1,
+                         RA2 => a2, Q2 => rq2,
+                         RA3 => a3, Q3 => rq3 );
+
+   Q0  <= rq0;
+   Q1  <= rq1;
+   Q2  <= rq2;
+   Q3  <= rq3;
+   fbq <= rq0 when bp = 0 else rq1 when bp = 1 else rq2 when bp = 2 else rq3;
+
+   -- The standard 8 bit BIST command register and bist output register
+   cr : process(clk, rst, bi, ctrl, bc, fbq)
+   begin
+      if rst = '1' then
+         ctrl <= (others => '0');
+         bq   <= '0';
+      elsif clk'event and clk = '1' then
+         if bi.bist = '1' and bi.en = '1' and bc = SHIFT_CTRL then
+            ctrl <= bi.ctrl & ctrl(7 downto 1);
+         end if;
+         if bi.bist = '1' and bi.en = '1' and bc = SHIFT_DATA then
+            bq   <= fbq(0);
+         end if;
+      end if;
+   end process;
+
+   -- decode the BIST command register
+   -- 7   6   5   4   3   2   1   0
+   -- we  -port-  ------addr-------
+   bc <= to_bist_cmd(bi.cmd);
+   be <=                     ctrl(7         ) when bc = SHIFT_DATA else '0';
+   bp <= to_integer(unsigned(ctrl(6 downto 5)));
+   ba <= to_integer(unsigned(ctrl(4 downto 0)));
+
+   -- bist outputs
+   bo.bist <= bi.bist;
+   bo.en   <= bi.en;
+   bo.cmd  <= bi.cmd;
+   bo.d    <= bq;
+   bo.ctrl <= ctrl(0);
+end bist;

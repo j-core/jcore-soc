@@ -1,4 +1,4 @@
--- input clock is 50 MHz
+-- input clock is 50-100 MHz
 -- This component will be enclosed in PIO
 -- Oct 31: add anther ChipSelect for D2A board, add divider
 -- TODO: clk_bus could be changed, 
@@ -14,7 +14,7 @@ use work.attr_pack.all;
 
 entity spi is 
         generic (c_csnum : integer range 2 to 5 := 2; 
-                 fclk    : real range 25.0e6 to 50.0e6 := 31.25e6); 
+                 fclk    : real range 25.0e6 to 100.0e6 := 31.25e6); 
         port (
 	clk_bus : in std_logic;
 	reset : in std_logic;
@@ -36,8 +36,8 @@ entity spi is
 end entity spi;
 
 architecture beh of spi is
-        constant spi_clk_steps : integer range 0 to 63 := integer(ceil(fclk/800000.0)); -- (fclk/2)/400khz
-        constant spi_clk_steps_diff : integer range -32 to 31 := spi_clk_steps - 32;
+        constant spi_clk_steps : integer range 0 to 127 := integer(ceil(fclk/800000.0)); -- (fclk/2)/400khz
+        constant spi_clk_steps_diff : integer range -32 to 95 := spi_clk_steps - 32;
 
 	signal rxbuf, rx_reg, txbuf, txdata : std_logic_vector(7 downto 0);
 	signal counter : std_logic_vector(3 downto 0);
@@ -47,8 +47,8 @@ architecture beh of spi is
 	signal spi_state : t_state;
 	signal w_spi_mosi, w_miso, miso_sw : std_logic;
 	signal  w_ackspi, w_ack : std_logic;
-	signal div : std_logic_vector(5 downto 0);
-	signal div_counter : integer range 0 to 63;
+	signal div : std_logic_vector(6 downto 0);
+	signal div_counter : integer range 0 to 127 := 40;
 	signal mux_clk, mux_clk_enable : std_logic;
 begin
 	gen_5 : if c_csnum = 5 generate
@@ -91,7 +91,7 @@ begin
                         -- SPI driver sets div either to 31 or 0.
                         -- Scale output spi_clk between (low speed 400Khz) to (full speed, i.e., fclk/ 2)
 			if mux_clk =  '1' or mux_clk_enable = '0' then
-                           if spi_clk_steps > 32 and div /= "000000" then
+                           if spi_clk_steps > 32 and div /= "0000000" then
 		                div_counter <= to_integer(unsigned(div))+spi_clk_steps_diff;
                            else 
                                 -- else when spi_clk_steps = 32 (< 32 indicates fclk < 25Mhz which we are not expecting)
@@ -114,7 +114,7 @@ begin
 			cs2_reg <= '0';
 			cs3_reg <= '0';
 			cs4_reg <= '0';
-			div <= std_logic_vector(to_unsigned(40,6)); -- for microboard
+			div <= std_logic_vector(to_unsigned(40,7)); -- for microboard
 			miso_sw <= '0';
 			txdata <= (others => '0');
 			start1 <= '0';
@@ -127,7 +127,7 @@ begin
 					cs2_reg <= db_i.d(4);
 					cs3_reg <= db_i.d(5);
 					cs4_reg <= db_i.d(6);
-					div <= '0' & db_i.d(31 downto 27);
+					div <= "00" & db_i.d(31 downto 27);
 				else
 				       	txdata <= db_i.d(7 downto 0);
 				end if;

@@ -37,10 +37,10 @@ $(project).bin: $(project).mcs
 $(project).bit: $(project)_par.ncd
 	bitgen $(intstyle) -g DriveDone:yes -g StartupClk:Cclk $(bitgen_opts) -w $(project)_par.ncd $(project).bit
 
-$(project)_par.ncd: $(project).ncd
-	par $(intstyle) $(par_opts) -w $(project).ncd $(project)_par.ncd
+%_par.ncd: %.ncd
+	par $(intstyle) $(par_opts) -w $< $@
 
-$(project).ncd: $(project).ngd
+%.ncd: %.ngd
 	map $(intstyle) $(map_opts) $<
 
 $(project).ucf : $(ucffile)
@@ -48,14 +48,15 @@ $(project).ucf : $(ucffile)
 	cmp -s $@.temp $@ || mv $@.temp $@
 	rm -f $@.temp
 
-$(project).ngd: $(project).ngc $(project).ucf
-	ngdbuild $(intstyle) $(project).ngc -uc $(project).ucf -p $(part2) $@
+%.ngd: %.ngc $(project).ucf
+	ngdbuild $(intstyle) $< -uc $(project).ucf -p $(part2) $@
 
 $(project).ngc: $(vfiles) $(vhdlfiles) $(project).scr $(project).prj
 	@command -v xst || ( printf "**************************************************************************\n******* Cannot find xst. Have you sourced the xilinx settings file? ******\n******* ex: source /opt/Xilinx/13.1/ISE_DS/settings32.sh            ******\n**************************************************************************\n" && false )
+
 	xst $(intstyle) -ifn $(project).scr -ofn $(project).syr
 
-$(project).prj: $(vfiles) $(vhdlfiles) $(project).ucf force
+$(project).prj: force
 	rm -f $(project).tmpprj
 	for src in $(vfiles); do echo "verilog work $$src" >> $(project).tmpprj; done
 # support .v files in the vhdfiles variable by filtering them out and
@@ -94,4 +95,35 @@ $(project)_err.twr:
 smartxplorer: $(project).ucf $(project).ngc
 	smartxplorer -p $(part2) -uc $(project).ucf -wd smartxplorer_$(project) $(project).ngc
 
-.PHONY: twr etwr force smartxplorer
+################################################################################
+# chipscope
+################################################################################
+
+CDC ?= $(project)
+$(CDC).cdc:
+	inserter -create $@
+
+cdc_edit: $(CDC).cdc $(project).ngc
+	inserter -edit $(CDC).cdc -ngcbuild -p $(part2) -i $(project).ngc $(CDC).cdc.ngc
+
+#$(CDC).cdc.ngc: $(CDC).cdc $(project).ngc
+
+cdc_insert: $(CDC).cdc $(project).ngc
+	inserter -insert $(CDC).cdc -ngcbuild -p $(part2) -i $(project).ngc $(CDC).cdc.ngc
+
+$(CDC).cdc.bit: $(CDC).cdc_par.ncd
+#	bitgen $(intstyle) -g DriveDone:yes -g StartupClk:Cclk $(bitgen_opts) -w $(project)_par.ncd $(project).bit
+	bitgen -w -g StartUpClk:JTAGClk -g CRC:Enable -g SPI_buswidth:1 $(CDC).cdc_par.ncd $(CDC).cdc.bit
+#$(CDC).cdc.pcf
+
+
+#ngdbuild  -p xc6slx45-csg324-2 -uc soc_1v1_evb_2v1.ucf soc.cdc.ngc
+
+#map -ol high -global_opt speed -w -mt 2 -detail -pr b soc.cdc.ngd
+#par -ol high -xe n -mt 4 -w soc.cdc.ncd soc.cdc_par.ncd soc.cdc.pcf
+#bitgen -w -g StartUpClk:JTAGClk -g CRC:Enable -g SPI_buswidth:1 soc.cdc_par.ncd soc_1v1_evb_2v1.cdc.bit soc.cdc.pcf
+
+.PHONY: twr etwr force smartxplorer cdc_edit cdc_insert
+
+# prevent some intermediate files from being deleted
+.SECONDARY: $(project).ngd $(CDC).cdc.ngd $(project).ncd $(project)_par.ncd $(CDC).cdc.ncd $(CDC).cdc_par.ncd

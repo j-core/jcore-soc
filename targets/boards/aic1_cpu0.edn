@@ -1,0 +1,14 @@
+{:class "aic"
+ :name "aic0"
+ :cpu 0
+ :dt-label "aic"
+ :dt-props {:cpu-offset {:fmt :hex :v (0x300)}}
+ :base-addr 0xabcd0200
+ :generics {"c_busperiod" CFG_CLK_CPU_PERIOD_NS}
+ :ports {"bstb_i" "cpu0_data_master_en"
+         "back_i" "cpu0_data_master_ack"
+         "rtc_sec" "rtc_sec"
+         "rtc_nsec" "rtc_nsec"
+         "enmi_i" 1
+         "event_i" "cpu0_event_o"
+         "event_o" "cpu0_event_i"}}

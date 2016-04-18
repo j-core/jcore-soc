@@ -1,0 +1,83 @@
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+use work.cpu2j0_pack.all;
+use work.attr_pack.all;
+
+entity gpio2 is
+  port (
+    clk : in std_logic;
+    rst : in std_logic;
+
+    db_i : in cpu_data_o_t;
+    db_o : out cpu_data_i_t;
+    irq : out std_logic;
+
+    d_i : in std_logic_vector(31 downto 0);
+    d_o : out std_logic_vector(31 downto 0);
+    d_t : out std_logic_vector(31 downto 0));
+  attribute sei_port_irq of irq : signal is true;
+end entity;
+
+architecture arch of gpio2 is
+  type reg_t is record
+    d : std_logic_vector(31 downto 0);
+    t : std_logic_vector(31 downto 0);
+    db : cpu_data_i_t;
+  end record;
+
+  constant REG_RESET : reg_t := (
+    d => (others => '0'),
+    t => (others => '0'),
+    db => (d => (others => '0'), ack => '0'));
+
+  register variable this : reg_t reset := REG_RESET;
+begin
+  p : process(this, db_i, d_i)
+    register this when clk = '1' and clk'event reset when rst = '1';
+  begin
+    if db_i.en = '1' and this.db.ack = '0' then
+      if db_i.wr = '1' then
+        case db_i.a(3 downto 2) is
+          when "00" =>
+            for i in 0 to 3 loop
+              if db_i.we(i) = '1' then
+                this.d(i * 8 + 7 downto i * 8) := db_i.d(i * 8 + 7 downto i * 8);
+              end if;
+            end loop;
+          when "01" =>
+            for i in 0 to 3 loop
+              if db_i.we(i) = '1' then
+                this.t(i * 8 + 7 downto i * 8) := db_i.d(i * 8 + 7 downto i * 8);
+              end if;
+            end loop;
+          when "10" =>
+            -- toggle data bits by xor-ing with written data
+            for i in 0 to 3 loop
+              if db_i.we(i) = '1' then
+                this.d(i * 8 + 7 downto i * 8) := this.d(i * 8 + 7 downto i * 8)
+                                                  xor db_i.d(i * 8 + 7 downto i * 8);
+              end if;
+            end loop;
+          when others =>
+        end case;
+      end if;
+    end if;
+    this.db.ack := db_i.en;
+
+    case db_i.a(3 downto 2) is
+      when "00" =>
+        this.db.d := d_i;
+      when "01" =>
+        this.db.d := this.t;
+      when others =>
+        this.db.d := (others => '0');
+    end case;
+  end process;
+
+  db_o <= this'register.db;
+  d_o  <= this'register.d;
+  d_t  <= this'register.t;
+
+  irq  <= '0';
+end architecture;

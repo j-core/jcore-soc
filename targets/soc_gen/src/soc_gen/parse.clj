@@ -41,7 +41,8 @@
     AttributeSpecification$EntityNameList
     Group
     GroupTemplate
-    EntityClass]
+    EntityClass
+    ConstantDeclaration]
    [de.upb.hni.vmagic.object
     VhdlObject$Mode
     Constant]
@@ -445,15 +446,29 @@
                     ports))
 
         ;; find and tag cpu data bus ports based on type and direction
-        ports
-        (let [db-out (filter #(= "cpu_data_i_t" (:id (:type %))) (vals ports))
-              db-in (filter #(= "cpu_data_o_t" (:id (:type %))) (vals ports))]
+        [desc
+         ports]
+        (let [db-out (filter #(and (= "cpu_data_i_t" (:id (:type %)))
+                                   (= :out (:dir %))) (vals ports))
+              db-in (filter #(and (= "cpu_data_o_t" (:id (:type %)))
+                                  (= :in (:dir %))) (vals ports))]
           (if (and (= 1 (count db-out))
                    (= 1 (count db-in)))
-            (-> ports
-                (assoc-in [(:id (first db-out)) :data-bus] :out)
-                (assoc-in [(:id (first db-in)) :data-bus] :in))
-            ports))
+            [(assoc desc :data-bus true)
+             (-> ports
+                 (assoc-in [(:id (first db-out)) :data-bus] :out)
+                 (assoc-in [(:id (first db-in)) :data-bus] :in))]
+            [desc ports]))
+
+        ;; find and tag ring bus ports based on type and direction
+        ports
+        (reduce
+         (fn [ports [n p]]
+           (if (#{"rbus_8b" "rbus_9b"} (:id (:type p)))
+             (assoc-in ports [n :ring-bus] (:dir p))
+             ports))
+         ports
+         ports)
 
         ;; find and tag bist ports based on type and direction
         ports
@@ -487,7 +502,24 @@
         ports
         (-> ports
             (find-sig-ports "reset" ["rst" "reset"])
-            (find-sig-ports "clk_sys" ["clk" "clk_bus"]))]
+            (find-sig-ports "clk_sys" ["clk" "clk_bus"]))
+
+        peripheral-bus
+        (when-let [periphs (seq (filter (comp #{"peripheral_bus"} :id :template) group-decls))]
+          (into {} (map (fn [p] [(:id p) (:items p)]) periphs)))
+
+        ;; override global signal names of peripheral bus ports
+        ports
+        (reduce
+         (fn [ports [bus-name port-name]]
+           (if-let [dir (get-in ports [port-name :dir])]
+             (assoc-in ports [port-name :global-signal]
+                       (s/join "_" [bus-name "periph_dbus" (first (name dir))]))
+             ports))
+         ports
+         (mapcat
+          (fn [[a b]] (map vector (repeat a) b))
+          peripheral-bus))]
 
     ;; validate info. Check that described ports actually exist
     #_(let [port-names (into #{} (keys ports))]
@@ -499,9 +531,19 @@
         (when (not (contains? port-names p))
           (errors/add-error (str "Unknown bus port \"" p
                                  "\" for entity \"" (v/id x) "\"")))))
+    (when peripheral-bus
+      (doseq [[n ps] peripheral-bus]
+        (if-not (and (= (count ps) 2)
+                     (= #{["cpu_data_o_t" :out]
+                          ["cpu_data_i_t" :in]}
+                        (set (map (juxt #(get-in % [:type :id]) :dir)
+                                  (vals (select-keys ports ps))))))
+          (errors/add-error (str "Invalid peripheral_bus \"" n
+                                 "\" for entity \"" (v/id x) "\"")))))
     (assoc
      desc
      :ports ports
+     :peripheral-bus peripheral-bus
      ;;:decls decls
      ;;:bus-ports bus-ports
      )))
@@ -574,6 +616,15 @@
                          (map #(cond (instance? NamedEntity %) (v/id %)) )
                          (filter identity)
                          vec)})))
+  ConstantDeclaration
+  (extract-impl [cd]
+    (mapv
+     (fn [c]
+       {:type :constant
+        :id (v/id c)
+        :subtype (extract-type (.getType c))
+        :value (.getDefaultValue c)})
+     (.getObjects cd)))
   Entity
   (extract-impl [entity]
     (let [generics (extract-generics entity)

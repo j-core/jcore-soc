@@ -6,7 +6,6 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
 use work.uart_pack.all;
-use work.attr_pack.all;
 
 entity uartlite is generic (
    intcfg : integer := 1;
@@ -20,11 +19,6 @@ entity uartlite is generic (
    -- The actual serial signals
    rx     : in  std_logic;
    tx     : out std_logic);
-
--- synopsys translate_off
-  group bus_sigs : bus_ports(a,y);
-  group ext_sigs : local_ports(rx,tx);
--- synopsys translate_on
 end uartlite;
 
 architecture beh of uartlite is

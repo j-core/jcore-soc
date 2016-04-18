@@ -3,7 +3,10 @@ use ieee.std_logic_1164.all;
 use work.cpu2j0_pack.all;
 use work.attr_pack.all;
 
-entity pio is port (
+entity pio is
+	generic (
+	DEFAULT_OUT : std_logic_vector(31 downto 0) := (31 => '1', others => '0'));
+	port (
 	clk_bus : in std_logic;
 	reset : in std_logic;
 	db_i : in cpu_data_o_t;
@@ -41,7 +44,7 @@ begin
 			pi_reg <= (others => '0');
 			pi_reg2 <= (others => '0');
 			pi_edge <= (others => '0');
-		       	pio_dout <= (31 => '1', others => '0');
+		       	pio_dout <= DEFAULT_OUT;
 			irq_r1 <= '0';
 			irq_r0 <= '0';
 	       	elsif rising_edge(clk_bus) then

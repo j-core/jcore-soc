@@ -1,4 +1,5 @@
 {:target :spartan6
+ :plugins #import "../default_plugins.edn"
  :pins {:file "../pins/mimas_v2.pins"
         :type :pin-names
         :rules
@@ -9,8 +10,8 @@
 
          {:match "clk_100mhz" :signal true :buff false}
 
-         {:match "uart_tx" :signal "uart_rx"}
-         {:match "uart_rx" :signal "uart_tx" :attrs {:drive 8 :slew "fast"}}
+         {:match "uart_tx" :signal "uart0_rx"}
+         {:match "uart_rx" :signal "uart0_tx" :attrs {:drive 8 :slew "fast"}}
          {:match "spi_.*" :attrs {:drive 8 :slew "fast"}}
          ;; never select on board flash
          {:match "spi_cs" :out 1}
@@ -53,10 +54,10 @@
          {:match ["switch" n] :attrs {:pullup true}}
          {:match ["led" n] :attrs {:drive 8 :slew "fast"} :out ["po(" n ")"]}
 
-         {:match "sd_miso" :signal "spi_miso"}
-         {:match "sd_mosi" :signal "spi_mosi" :attrs {:drive 8 :slew "fast"}}
-         {:match "sd_cs" :signal "spi_cs(0)" :attrs {:drive 8 :slew "fast"}}
-         {:match "sd_clk" :signal "spi_clk" :attrs {:drive 8 :slew "fast"}}
+         {:match "sd_miso" :signal "flash_miso"}
+         {:match "sd_mosi" :signal "flash_mosi" :attrs {:drive 8 :slew "fast"}}
+         {:match "sd_cs" :signal "flash_cs(0)" :attrs {:drive 8 :slew "fast"}}
+         {:match "sd_clk" :signal "flash_clk" :attrs {:drive 8 :slew "fast"}}
 
          {:match ["sevensegment" n] :attrs {:drive 8 :slew "fast"}}
          {:match "sevensegment0" :out "po(8)"}
@@ -83,11 +84,9 @@
  ;; the right is renamed to the signal on the left
  :merge-signals
  {"pll_rst" ["ddr_clkgen_reset_i" "pll_250_reset_o"]
-  "clock_locked" ["ddr_clkgen_locked" "clk_ddr"]
-  "clk_sys" ["clk_sys" "ddr_clkgen_clk0_o" "clk_50_0"]
-  "clk_sys_90" ["ddr_clkgen_clk90_o" "clk_50_90"]
-  "clk_sys2x" ["ddr_clkgen_clk2x_o"]
-  "clk31_todcm" ["pll_250_clk31" "ddr_clkgen_clk_i"]}
+  "clk_sys" ["clk_cpu" "clk_mem"]
+  "clk_sys_90" ["clk_mem_90"]
+  "clk_sys_2x" ["clk_mem_2x"]}
 
  ;; Supply a zero value for a list of global signals that aren't
  ;; output by devices in the design
@@ -95,31 +94,57 @@
  ["icache0_ctrl"
   "icache1_ctrl"
   "cache01sel_ctrl_temp"
-  "dcache_ctrl"
+  "dcache0_ctrl"
+  "dcache1_ctrl"
   "dma_dbus_o"
+  "cpu0_event_i"
+  "cpu1_event_i"
   "debug_i"]
 
+ :peripheral-buses
+ {"cpu1" false}
+
  :system
- {:pio
+ {:data-bus-decode :exact
+  :dram [0x10000000 0x4000000]
+  :pio
   {[0 7] {:name "led"}
    [8 15] {:name "sevensegment"}
-   [16 31] 0}}
+   [16 18] {:name "sevensegmentenable"}
+   [19 31] 0}}
+
+ :soc
+ {$include "../soc.edn"}
 
  ;; list entities, other than top, that should be instantiated at the
  ;; padring level
- :padring-entities {"pll_250" {:ports {"clk" {:global-signal "clk_100mhz"}}}
-                    "ddr_clkgen" {}
-                    "ddr_iocells" {}
-                    "reset_gen" {}}
+ :padring-entities {"pll_250" {:generics {"CLK_CPU_DIVIDE" CFG_CLK_CPU_DIVIDE}
+                               :ports {"clk" "clk_100mhz"
+                                       "clk_cpu" "clkgen_i"}}
+                    "ddr_clkgen" {:ports {"clk_i" "clkgen_i"
+                                          "clk0_o" "clk_sys"
+                                          "clk90_o" "clk_sys_90"
+                                          "clk2x_o" "clk_sys_2x"
+                                          "locked" "clock_locked0"}}
+                    "ddr_iocells" {:entity "ddr_phy"
+                                   :configuration "ddr_phy_spartan6"
+                                   :ports {"ck_p" "ddr_clk"
+                                           "ck2x0" "clk_sys"
+                                           "ck2x90" "clk_sys_90"}
+                                   :generics {"READ_SAMPLE_TM" CFG_DDR_READ_SAMPLE_TM}}
+                    "reset_gen" {:ports {"clock_locked1" 1}}}
 
  ;; list entities, other that the devices entity, that should be
  ;; instantiated at the top level
- :top-entities {"cpus" {:architecture "one_cpu"}
-                "ddr_ram_mux" {:architecture "one_cpu_direct"}
-                "ddr_ctrl" {:generics {"c_data_width" CFG_DDRDQ_WIDTH
-                                       "c_sa_width" CFG_SA_WIDTH
-                                       "c_dll_enable" 2
-                                       "c_period_clkbus" CFG_BUS_PERIOD}}}
+ :top-entities {"cpus" {:configuration "one_cpu_fpga"}
+                "ddr_ram_mux" {:configuration "ddr_ram_mux_one_cpu_idcache_fpga"}
+                "ddr_ctrl" {:entity "ddr_fsm"
+                            :ports {"clk_2x" "clk_sys_2x"
+                                    "clk" "clk_sys"
+                                    "clk_90" "clk_sys_90"
+                                    "fix_pinhi" 0
+                                    "fix_pinlo" 0}
+                            :generics {"READ_SAMPLE_TM" CFG_DDR_READ_SAMPLE_TM}}}
 
  :device-classes
  {$include "../common_device_classes.edn"}
@@ -127,14 +152,21 @@
  [{:class "gpio"
    :base-addr 0xabcd0000
    :irq 4}
+  {$include "../aic1_cpu0.edn"}
   {:class "spi"
+   :name "flash"
    :base-addr 0xabcd0040
-   :generics {"c_csnum" 2
-              "fclk" 31.25e6}}
+   :generics {"num_cs" 2}}
   {:class "uartlite"
-   :name "uart"
+   :name "uart0"
    :base-addr 0xabcd0100
    :irq 1
    :generics {"intcfg" 1
-              "fclk" 31.25e6
-              "bps" 19.2e3}}]}
+              "bps" 19.2e3}
+   :dt-props {:current-speed (19200)
+              :port-number (0)}
+   :dt-stdout true}
+  {:class "cache_ctrl"
+   :base-addr 0xabcd00c0
+   :irq {"int0" {:cpu 0 :irq 3}
+         "int1" {:cpu 1 :irq 3 :dt? false}}}]}

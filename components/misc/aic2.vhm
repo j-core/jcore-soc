@@ -1,0 +1,430 @@
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.std_logic_unsigned.all;
+use ieee.numeric_std.all;
+use work.cpu2j0_pack.all;
+use work.aic2_pack.all;
+use work.misc_pack.all;
+
+-- generic cpuid to provided to remove "cpu-0 only logic"
+-- for cpuid = 1, 2, 3, ... aics
+
+entity aic2 is
+        generic (c_busperiod : integer := 40;
+        cpuid       : integer :=  0;
+        IRQ_SI0_NUM : integer :=  78;
+        IRQ_SI1_NUM : integer := (78 + 1);
+        IRQ_SI2_NUM : integer := (78 + 2);
+        IRQ_SI3_NUM : integer := (78 + 3);
+        IRQ_SI4_NUM : integer := (78 + 4);
+        IRQ_SI5_NUM : integer := (78 + 5);
+        IRQ_SI6_NUM : integer := (78 + 6);
+        IRQ_SI7_NUM : integer := (78 + 7);
+        IRQ_II0_NUM : integer :=  76
+        );
+        port (
+        clk_sys     : in  std_logic;
+        rst_i       : in  std_logic;
+        db_i        : in  cpu_data_o_t;
+        db_o        : out cpu_data_i_t;
+        rtc_sec     : out std_logic_vector(63 downto 0);    -- clk_sys domain
+        rtc_nsec    : out std_logic_vector(31 downto 0);
+        irq_grp_i   : in  irq_a_t;
+        irq_s_i     : in  std_logic_vector( 7 downto 0) := (others => '0');
+        enmi_i      : in  std_logic;
+        event_i : in cpu_event_o_t;
+        event_o : out cpu_event_i_t
+        );
+end aic2;
+
+architecture behav of aic2 is
+
+  register variable this : aictwo_reg_t reset := AIC2_REG_RESET;
+
+  signal event_req  : std_logic_vector( 2 downto 0);
+  signal event_info : std_logic_vector(11 downto 0);
+
+begin
+  p0 : process (this, rst_i, db_i, irq_grp_i, irq_s_i, enmi_i, event_i )
+
+    register this when clk_sys='1' and clk_sys'event reset when rst_i='1';
+
+  -- --------------------------------------------------------------------------
+  -- variables
+  -- --------------------------------------------------------------------------
+  variable nx                  : aictwo_reg_t;
+  -- 
+  variable db_o_ack            : std_logic;
+  variable db_o_d              : std_logic_vector(31 downto 0);
+  variable id_non_zero_mask_bn : std_logic_vector(63 downto 0);
+  variable id_non_zero_mask_rr : std_logic_vector(30 downto 0);
+  variable irqsiedge_det       : std_logic_vector( 7 downto 0);
+  variable pit_event           : std_logic;
+  variable s_nmi               : std_logic;
+  variable s_pit               : std_logic;
+  variable s_mrs               : std_logic;
+  -- 
+  variable tmp2b_1             : std_logic_vector( 1 downto 0);
+  variable tmp2b_2             : std_logic_vector( 1 downto 0);
+  variable tmp4b               : std_logic_vector( 3 downto 0);
+  variable tmp6b               : std_logic_vector( 5 downto 0);
+  variable tmp15b              : std_logic_vector(14 downto 0);
+  variable tmp64b              : std_logic_vector(63 downto 0);
+  variable tmpj                : integer range 0 to 15;
+  variable tmpint1             : integer range 0 to   31;
+  variable tmpint2             : integer range 0 to   31;
+
+  begin -- begin of process ( )
+
+  nx := this; -- set all nx variable
+ 
+  -- process <-> part1, 2, ..., 8 --------------------------------------------- 
+  -- part 1 rtc ---------------------------------------------------------------
+  -- part 1.1 - counber based
+  if this.reg_rtc_nsec >=
+     std_logic_vector(to_unsigned(1e9, this.reg_rtc_nsec'length)) then
+    nx.reg_rtc_nsec := this.reg_rtc_nsec - (1e9 - c_busperiod); --999999960;
+    nx.reg_rtc_sec  := this.reg_rtc_sec + 1;
+  else
+    nx.reg_rtc_nsec := this.reg_rtc_nsec + c_busperiod;
+    nx.reg_rtc_sec  := this.reg_rtc_sec;
+  end if;
+
+  -- part 1.2 - cpu acc based
+  if ((db_i.en and db_i.wr and db_i.a(5)) = '1') then
+    case db_i.a(3 downto 2) is
+    when b"00" =>   nx.reg_rtc_sec(63 downto 32) := db_i.d;
+    when b"01" =>   nx.reg_rtc_sec(31 downto  0) := db_i.d;
+    when b"10" =>   nx.reg_rtc_nsec              := db_i.d;
+    when others => 
+    end case;
+  end if;
+
+  -- part 2 debug and wake up (both are small FSM) -----------------------------
+  case this.db_state is
+  when db_init => 
+    if this.irq_bynum(82 - 64) = '1' then
+      nx.db_state := DB_INT;
+      nx.db_count := this.db_count + 1;
+    end if;
+  when others => -- when db_count
+    if this.irq_bynum(82 - 64) = '0' then
+      nx.db_state := DB_INIT;
+      nx.db_count := this.db_count + 1;
+    end if;
+  end case;
+
+  case this.wakeup_state is
+  when RESET  => nx.wakeup_state := WAKE1;
+  when WAKE1  => nx.wakeup_state := WAKE2;
+  when others => nx.wakeup_state := IDLE; -- others = WAKE2 + IDLE
+  end case;
+
+  if (( db_i.en = '1') and
+      ((db_i.rd = '1') or (this.w_ack = '1'))) then db_o_ack := '1';
+  else                                              db_o_ack := '0'; end if;
+  db_o.ack <=                                       db_o_ack;
+
+  -- part 3 register read ------------------------------------------------------
+  --    -- Registe layout for reads
+        -- addr bits
+        -- 5432   Contents
+        -----------------------------------
+        -- 0000 - "00000" & pit_enable & count_enable & brk_enable & 
+        --          pit_irqnumrb & "00" & pit_irqnuma 
+        --          & count
+        -- 0001 - zero
+        -- 0010 - zero
+        -- 0011 - irq_i & q_irq(sample) & pit_flag & db_ackcount & db_count
+        -- 0100 - PIT throttle
+        -- 0101 - PIT counter
+        -- 0110 - Bus clock period in nanoseconds
+        -- 0111 - zero
+        -- 1x00 - RTC seconds upper 32 bits
+        -- 1x01 - RTC seconds lower 32 bits
+        -- 1x10 - RTC nanoseconds
+        -- 1x11 - zero
+
+  -- cpu (or dma) read data address selector
+  case db_i.a(5 downto 2) is
+  when x"0"        =>     db_o_d := b"00000" & this.pit_enable &
+                                    this.count_enable & '0' &
+                                    this.pit_irqnumb & b"00" &
+                                    this.pit_irqnuma & this.count;
+                                      -- ---------------- 5+1+1+1+4+2+6+12 = 32
+  when x"1" | x"2" =>     db_o_d := (others => '0');
+  when x"3"        =>     db_o_d := this.irqsample_i & this.q_irqs & 
+                                    this.pit_flag & this.gsel & x"00" &
+                                    this.db_count;
+                                      -- --------------------- 8+8+1+3+8+4 = 32
+  when x"4"        =>     db_o_d := this.pit_throttle;
+  when x"5"        =>     db_o_d := this.pit_cntr;
+  when x"6"        =>     db_o_d := std_logic_vector(to_unsigned(c_busperiod, 
+                                    db_o_d'length));
+  when x"7"        =>     db_o_d := (others => '0');
+  when x"8" | x"c" =>     db_o_d := this.reg_rtc_sec(63 downto 32);
+  when x"9" | x"d" =>     db_o_d := this.reg_rtc_sec(31 downto  0);
+  when x"a" | x"e" =>     db_o_d := this.reg_rtc_nsec;
+  when others => -- x"b" | x"f"
+                          db_o_d := (others => '0');
+  end case;
+  db_o.d <=               db_o_d;
+
+  -- read 2cycle (internally 2cycle gsel phase + db_o_d phase)
+  nx.q_irqs := this.irq_bynum((8 * vtoi(this.gsel) + 7) downto
+                              (8 * vtoi(this.gsel) + 0));
+
+  -- part 4 reg_event , priority (1cycle early) -------------------------------
+  if   (this.r_mrst = '1') then -----------------------------------------------
+    --                        15    14:12          11:0
+    -- --------------------------------------------------
+              nx.reg_event := '0' & c_event_mres & x"f02";
+
+  elsif(this.r_nmi = '1') then ---------------------------------------------
+              nx.reg_event := '0' & c_event_nmi  & x"f0b";
+
+  elsif(this.irq_peout(6) = '1') then ----------------------------------------
+              nx.reg_event := '1' & c_event_irq  & this.irq_peout(5 downto 2)
+                                                 & b"01"
+                                                 & this.irq_peout(5 downto 0);
+     -- bit 11 - bit 8 overwrite -- 
+    if(this.irq_peout(5 downto 2) = x"0") then -- num(5:0) = (deci)0, 1, 2, 3
+              nx.reg_event(11 downto 8) :=       x"1";
+    end if;                                   --   + level 0000 is no effect
+  else ------------------------------------------------------------------------
+              nx.reg_event := '0' & c_event_nevt & x"f18";
+  end if;
+
+  -- priority encode between 64-127
+  -- init
+  -- 8 bit round robin (event(64) - event(71))
+                                      tmp15b(14 downto 7) :=
+  this.irq_bynum(0) & this.irq_bynum(1) &
+  this.irq_bynum(2) & this.irq_bynum(3) &
+  this.irq_bynum(4) & this.irq_bynum(5) &
+  this.irq_bynum(6) & this.irq_bynum(7) ;
+                                      tmp15b( 6 downto 0) :=
+                                      tmp15b(14 downto 8) ; -- only 7 bits
+
+  case this.roundrobin_ptr(2 downto 0) is
+  when b"000" =>                      tmp15b := tmp15b and b"111111110000000";
+  when b"001" =>                      tmp15b := tmp15b and b"011111111000000";
+  when b"010" =>                      tmp15b := tmp15b and b"001111111100000";
+  when b"011" =>                      tmp15b := tmp15b and b"000111111110000";
+  when b"100" =>                      tmp15b := tmp15b and b"000011111111000";
+  when b"101" =>                      tmp15b := tmp15b and b"000001111111100";
+  when b"110" =>                      tmp15b := tmp15b and b"000000111111110";
+  when others =>                      tmp15b := tmp15b and b"000000011111111";
+  end case;
+
+  -- init --                 -----
+                             nx.irq_peout := '0' & b"000000";
+  -- init end --             +----
+  --                         W -- overwrite in two statements (+3L, +35L)
+  for i in 0 to 14 loop
+                         --  |
+    tmpj := 14 - i;      --  W
+    if(tmp15b(i) = '1') then nx.irq_peout := '1' & b"00" &
+                        (std_logic_vector(to_unsigned(tmpj, 4)) and b"0111");
+    end if;              --  |
+  end loop;
+ 
+  -- for ilevel = 2 to 15 - overwrites nx.irq_peout
+  for i in 2 to 15 loop
+    if this.irq_bynum               ((4 * i + 3) downto
+                                     (4 * i + 0)) /= b"0000" then
+                                           -- level i (2-15), level-wise valid 
+      tmp2b_1 := this.roundrobin_ptr((2 * i + 0) downto
+                                     (2 * i - 1));
+      tmp4b   := this.irq_bynum     ((4 * i + 3) downto
+                                     (4 * i + 0));
+                                                 tmp6b := 
+      tmp4b(0) & tmp4b(1) & tmp4b(2) & tmp4b(3) & 
+      tmp4b(0) & tmp4b(1) ;
+      case tmp2b_1 is                    -- note: case var incl. (variable 
+                                         -- index) is NG (compile error)
+      when b"00"  =>                             tmp6b := tmp6b and b"111100";
+      when b"01"  =>                             tmp6b := tmp6b and b"011110";
+      when b"10"  =>                             tmp6b := tmp6b and b"001111";
+      when others => -- b"11" 
+                                                 tmp6b := tmp6b and b"000111";
+      end case;
+      if   (tmp6b(5) = '1') then               tmp2b_2 := b"00";
+      elsif(tmp6b(4) = '1') then               tmp2b_2 := b"01";
+      elsif(tmp6b(3) = '1') then               tmp2b_2 := b"10";
+      elsif(tmp6b(2) = '1') then               tmp2b_2 := b"11";
+      elsif(tmp6b(1) = '1') then               tmp2b_2 := b"00";
+      elsif(tmp6b(0) = '1') then               tmp2b_2 := b"01";
+      else                                     tmp2b_2 := b"10"; end if;
+                         --  |                 |
+                         --  W                 V
+                             nx.irq_peout := '1' & std_logic_vector(
+                                           --  |
+                          to_unsigned(i, 4)) & tmp2b_2;
+    end if;
+  end loop;
+
+  -- part 5 register write ----------------------------------------------------
+  -- s_mrs etc 
+                     s_nmi    := '0';
+                     s_pit    := '0';
+                     s_mrs    := '0';
+  -- write main
+  if(db_i.en = '1') and (db_i.wr = '1') then
+    case db_i.a(5 downto 2) is
+    when x"0"            => if(this.pit_enable = '0') then
+                              nx.pit_irqnumb   := db_i.d(23 downto 20);
+                              nx.pit_irqnuma   := db_i.d(17 downto 12); end if;
+                            if(db_i.we(3) = '1') then
+                              s_nmi    := db_i.d(31);
+                              s_pit    := db_i.d(30);
+                              s_mrs    := db_i.d(27);
+                            end if;
+                            nx.pit_enable   := db_i.d(26);
+                            nx.count_enable := db_i.d(25);
+                            nx.count        := db_i.d(11 downto 0);
+    when x"1" | x"2"     =>     -- no reg
+    when x"3"            => nx.gsel         := db_i.d(14 downto 12);
+    when x"4"            => if(this.pit_enable = '0') then
+                              nx.pit_throttle := db_i.d; end if;
+    when x"5" | x"6"     =>     -- read only register
+    when x"7"            =>     -- no reg
+    when x"8" | x"9" | x"a" => -- described in RTC 
+    when others          =>     -- no reg
+    end case;
+  end if;
+  nx.w_ack := db_i.en;
+
+  -- pit_throttle special : update immediately after reset
+  if(this.wakeup_state = WAKE2) then 
+    nx.pit_throttle := std_logic_vector(to_unsigned(1e9 / 100 / c_busperiod,
+                                        nx.pit_throttle'length));
+  end if;
+
+  -- part 6 misc --------------------------------------------------------------
+  -- count
+  if this.count_enable = '1' then nx.count := this.count - 1; end if;
+
+  -- pit_event (note "pit_event" is variable)
+  if(this.pit_cntr = this.pit_throttle) then pit_event := '1';
+  else                                       pit_event := '0'; end if;
+  -- pit counter etc.
+  if this.pit_enable = '1' then
+    if pit_event = '1' then nx.pit_cntr := (others => '0');
+                            nx.pit_flag := not this.pit_flag;
+    else                    nx.pit_cntr := this.pit_cntr + 1; end if;
+  else                      nx.pit_cntr := (others => '0');
+  end if;
+
+  -- MISC events
+  nx.r_mrst := s_mrs;
+  nx.r_nmi  := s_nmi or (not enmi_i);
+  if(event_i.ack = '1') then
+    case this.reg_event(14 downto 12) is
+    when c_event_mres => nx.r_mrst := '0';
+    when c_event_nmi  => nx.r_nmi  := '0';
+    when others => 
+    end case;
+  end if;
+   
+  -- part 7 event ff update evaluation ----------------------------------------
+  -- irq_bynum
+  -- irq_bynum set information accumulate for various source
+  -- initial value -------------- -------
+                                  tmp64b := (others => '0');
+  -- initial value end ---------- -------
+  if(cpuid = 0) then
+    for i in 0 to 9 loop
+      if (irq_grp_i(i).en = '1') then
+                                  tmp64b(vtoi(irq_grp_i(i).num)) := '1';
+      end if;
+    end loop;
+  else -- no tmp64b( ) bit set
+       -- cpuid /= 0 logic removal for area reduction -- part (1/2)
+  end if;
+
+  -- edge detection for old aic compatible
+  irqsiedge_det := (this.irqsiedge0) and (not this.irqsiedge1);
+                                                               -- 8bit and 8bit
+  if(irqsiedge_det(0) = '1') then tmp64b(IRQ_SI0_NUM - 64) := '1'; end if;
+  if(irqsiedge_det(1) = '1') then tmp64b(IRQ_SI1_NUM - 64) := '1'; end if;
+  if(irqsiedge_det(2) = '1') then tmp64b(IRQ_SI2_NUM - 64) := '1'; end if;
+  if(irqsiedge_det(3) = '1') then tmp64b(IRQ_SI3_NUM - 64) := '1'; end if;
+  if(irqsiedge_det(4) = '1') then tmp64b(IRQ_SI4_NUM - 64) := '1'; end if;
+  if(irqsiedge_det(5) = '1') then tmp64b(IRQ_SI5_NUM - 64) := '1'; end if;
+  if(irqsiedge_det(6) = '1') then tmp64b(IRQ_SI6_NUM - 64) := '1'; end if;
+  if(irqsiedge_det(7) = '1') then tmp64b(IRQ_SI7_NUM - 64) := '1'; end if;
+  -- edge detection end
+  if(this.count_enable = '1') and (this.count = x"000") then
+                                  tmp64b(IRQ_II0_NUM  - 64) := '1'; end if;
+  if(s_pit = '1') or (pit_event = '1') then
+                                  tmp64b(vtoi(
+                      (this.pit_irqnumb & b"00") or this.pit_irqnuma )) := '1';
+  end if;
+  -- accumulation finish, tmp64b is refered twice (main user is irq_bynum).
+
+  nx.irq_bynum := this.irq_bynum or tmp64b;
+
+  -- irq_bynum clear
+  if(event_i.ack = '1') and (this.reg_event(14 downto 12) = c_event_irq) then
+    nx.irq_bynum(vtoi(this.reg_event(5 downto 0))) := '0';
+  end if;
+
+  -- aic + 0xc input and event register visible to software -------------------
+  nx.irqsample_i :=                tmp64b((8 * vtoi(this.gsel) + 7) downto
+                                          (8 * vtoi(this.gsel) + 0));
+
+  -- irq_s_i input
+  nx.irqsiedge0 := irq_s_i;         -- input -> ff
+  nx.irqsiedge1 := this.irqsiedge0; -- ff -> ff
+
+  -- round pointer update
+  if(event_i.ack = '1') and (this.reg_event(14 downto 12) = c_event_irq) then
+    case this.reg_event(5 downto 2) is
+    when b"0000" | b"0001" =>
+      nx.roundrobin_ptr(2 downto 0) :=
+        std_logic_vector(unsigned(this.reg_event(2 downto 0)) + 1);
+    when others =>
+      nx.roundrobin_ptr((2 * vtoi(this.reg_event(5 downto 2)) + 0) downto
+                        (2 * vtoi(this.reg_event(5 downto 2)) - 1)) :=
+        std_logic_vector(unsigned(this.reg_event(1 downto 0)) + 1);
+    end case;
+  end if;
+
+  -- part 8. cpuid /= 0 logic removal for area reduction 
+  --                                                   -- part (2/2) of removal
+  -- part 8.1 pre-process
+  id_non_zero_mask_bn                    := x"11111111" & x"11111101";
+  id_non_zero_mask_bn(IRQ_II0_NUM  - 64) := '1';
+  id_non_zero_mask_bn(IRQ_SI0_NUM  - 64) := '1';
+  tmpint1 := ((IRQ_II0_NUM - 64) / 4) * 2; -- to ease index calc
+  tmpint2 := ((IRQ_SI0_NUM - 64) / 4) * 2;
+  id_non_zero_mask_rr                                   := x"0000000" & b"000";
+  if           IRQ_II0_NUM < 72 then
+       id_non_zero_mask_rr(2       downto  0           ) := b"111";
+  else id_non_zero_mask_rr(tmpint1 downto (tmpint1 - 1)) := b"11"; end if;
+  if           IRQ_SI0_NUM < 72 then
+       id_non_zero_mask_rr(2       downto  0           ) := b"111";
+  else id_non_zero_mask_rr(tmpint2 downto (tmpint2 - 1)) := b"11"; end if;
+  -- part 8.2 main cutdown
+  if(cpuid /= 0) then
+    nx.reg_rtc_nsec   := (others => '0');
+    nx.reg_rtc_sec    := (others => '0');
+    nx.irq_bynum      := nx.irq_bynum      and id_non_zero_mask_bn;
+    nx.roundrobin_ptr := nx.roundrobin_ptr and id_non_zero_mask_rr;
+                                          -- remove 47 ff-s and 29 (or 28) ff-s
+  end if;  -- end of if(cpuid /= 0) ...
+  -- end of cpuid /= 0 logic removal for area reduction -- part (2/2)
+
+  this := nx; -- all ff update
+
+  end process;
+ 
+  event_req  <= this'register.reg_event(14 downto 12);
+  event_info <= this'register.reg_event(11 downto  0);
+  -- output drive  -------------------
+  event_o    <= to_event_i(event_req, event_info); 
+  rtc_sec    <= this'register.reg_rtc_sec;
+  rtc_nsec   <= this'register.reg_rtc_nsec;
+
+end behav;

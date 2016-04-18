@@ -27,7 +27,7 @@ entity multi_master_bus_muxlock is port (
 end multi_master_bus_muxlock;
 
 architecture a of multi_master_bus_muxlock is
-  type state_t is (M1, M2, M1LOCK1, M1LOCK2, M2LOCK1, M2LOCK2);
+  type state_t is (M1, M2, M1LOCK1, M1LOCK2, M2LOCK1, M2LOCK2, M2POLL);
   type bus_mux_reg_t is record
     state : state_t;
     m1 : cpu_data_i_t;
@@ -53,7 +53,7 @@ begin
     when M1 =>
       if (m1_o.en = '1' or m2_o.en = '0') then
         if(m1_o.en = '1') and (m1_o.wr = '0') and (m1_lock = '1') then
-          slave_lockvar := '1';
+                                     slave_lockvar := '1';
           if(slave_i.ack = '1') then this.state := M1LOCK2;
           else                       this.state := M1LOCK1; end if;
         else                         this.state := M1; end if;
@@ -61,8 +61,8 @@ begin
         this.m2.ack := '0';
         this.slave := m1_o;
       else
-        if(m2_o.wr = '0') and (m2_lock = '1') then
-          slave_lockvar := '1';
+        if(m2_o.en = '1') and (m2_o.wr = '0') and (m2_lock = '1') then
+                                     slave_lockvar := '1';
           if(slave_i.ack = '1') then this.state := M2LOCK2;
           else                       this.state := M2LOCK1; end if;
         else                         this.state := M2; end if;
@@ -71,15 +71,23 @@ begin
         this.slave := m2_o;
       end if;
     when M1LOCK1 =>
-        slave_lockvar := '1';
         if(slave_i.ack = '1') then   this.state := M1LOCK2;
         else                         this.state := M1LOCK1; end if;
         this.m1.ack := slave_i.ack;
         this.m2.ack := '0';
         this.slave := m1_o;
+                                     slave_lockvar := '1';
     when M1LOCK2 =>
-        if(m1_o.en = '1') then       this.state := M1;
-        else                         this.state := M1LOCK2; end if;
+        if(m1_o.en = '1') then
+          if(m1_o.wr = '0') and (m1_lock = '1') then
+                                     slave_lockvar := '1';
+            if(slave_i.ack = '1') then
+                                     this.state := M1LOCK2;
+            else                     this.state := M1LOCK1; end if;
+          else                       this.state := M1; end if;
+        elsif(m1_lock = '0') then    this.state := M2POLL;
+        else                         slave_lockvar := '1';
+                                     this.state := M1LOCK2; end if;
         this.m1.ack := slave_i.ack;
         this.m2.ack := '0';
         this.slave := m1_o;
@@ -87,7 +95,7 @@ begin
       if (m1_o.en = '1' or m2_o.en = '0') and
         (this.slave_ack = '1') then
         if(m1_o.en = '1') and (m1_o.wr = '0') and (m1_lock = '1') then
-          slave_lockvar := '1';
+                                     slave_lockvar := '1';
           if(slave_i.ack = '1') then this.state := M1LOCK2;
           else                       this.state := M1LOCK1; end if;
         else                         this.state := M1; end if;
@@ -95,8 +103,8 @@ begin
         this.m2.ack := '0';
         this.slave := m1_o;
       else
-        if(m2_o.wr = '0') and (m2_lock = '1') then
-          slave_lockvar := '1';
+        if(m2_o.en = '1') and (m2_o.wr = '0') and (m2_lock = '1') then
+                                     slave_lockvar := '1';
           if(slave_i.ack = '1') then this.state := M2LOCK2;
           else                       this.state := M2LOCK1; end if;
         else                         this.state := M2; end if;
@@ -105,18 +113,58 @@ begin
         this.slave := m2_o;
       end if;
     when M2LOCK1 =>
-        slave_lockvar := '1';
         if(slave_i.ack = '1') then   this.state := M2LOCK2;
         else                         this.state := M2LOCK1; end if;
         this.m1.ack := '0';
         this.m2.ack := slave_i.ack;
         this.slave := m2_o;
-    when others => -- M2LOCK2
-        if(m2_o.en = '1') then       this.state := M2;
-        else                         this.state := M2LOCK2; end if;
+                                     slave_lockvar := '1';
+    when M2LOCK2 =>
+        if(m2_o.en = '1') then
+          if(m2_o.wr = '0') and (m2_lock = '1') then
+                                     slave_lockvar := '1';
+            if(slave_i.ack = '1') then
+                                     this.state := M2LOCK2;
+            else                     this.state := M2LOCK1; end if;
+          else                       this.state := M2; end if;
+          this.m1.ack := '0';
+          this.m2.ack := slave_i.ack;
+          this.slave := m2_o;
+        elsif(m2_lock = '0') then
+          if(m1_o.en = '1') and (m1_o.wr = '0') and (m1_lock = '1') then
+                                     slave_lockvar := '1';
+            if(slave_i.ack = '1') then
+                                     this.state := M1LOCK2;
+            else                     this.state := M1LOCK1; end if;
+          else                       this.state := M1; end if;
+          this.m1.ack := slave_i.ack;
+          this.m2.ack := '0';
+          this.slave := m1_o;
+        else                         slave_lockvar := '1';
+                                     this.state := M2LOCK2;
+          this.m1.ack := '0';
+          this.m2.ack := slave_i.ack;
+          this.slave := m2_o; end if;
+    when others => -- M2POLL
+      if (m2_o.en = '0') then
+        if(m1_o.en = '1') and (m1_o.wr = '0') and (m1_lock = '1') then
+                                     slave_lockvar := '1';
+          if(slave_i.ack = '1') then this.state := M1LOCK2;
+          else                       this.state := M1LOCK1; end if;
+        else                         this.state := M1; end if;
+        this.m1.ack := slave_i.ack;
+        this.m2.ack := '0';
+        this.slave := m1_o;
+      else -- that is (m2_o.en = '1')
+        if(m2_o.wr = '0') and (m2_lock = '1') then
+                                     slave_lockvar := '1';
+          if(slave_i.ack = '1') then this.state := M2LOCK2;
+          else                       this.state := M2LOCK1; end if;
+        else                         this.state := M2; end if;
         this.m1.ack := '0';
         this.m2.ack := slave_i.ack;
         this.slave := m2_o;
+      end if;
     end case;
    
     this.slave_ack := slave_i.ack;

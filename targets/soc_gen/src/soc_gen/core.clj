@@ -129,6 +129,7 @@
                (assoc
                  :name board-name
                  :board-dir board-dir)
+               ;; validate board target
                (update-in [:target]
                           (fn [target]
                             (cond
@@ -137,6 +138,7 @@
                              (nil? target) :spartan6
                              :else (throw (Exception. (str "Unrecognized target " target)))))))
 
+           ;; parse pin file
            {:keys [file part type] :or {type :pin-list}} (:pins design)
            design (cond
                    (and file part (= type :pin-list))
@@ -167,8 +169,19 @@
                        (for [[n v] (:padring-entities design)] (or (:entity v) n))
                        (for [[n v] (:top-entities design)] (or (:entity v) n))
                        (let [device-classes
-                             (into {} (for [[n v] (:device-classes design)] [n (or (:entity v) n)]))]
-                         (for [dev (:devices design)] (device-classes (:class dev)))))))
+                             (into {} (for [[n v] (:device-classes design)] [n (or (:entity v) n)]))
+                             requires
+                             (into {} (for [[n v] (:device-classes design)] [n (:requires v)]))]
+                         (set
+                          (concat
+                           (for [dev (:devices design)] (device-classes (:class dev)))
+                           ;; Add entities required by all the used device classes
+                           (map device-classes (mapcat requires (map :class (:devices design))))))))))
+
+           ;; force parsing of multi master buses for use in generated code
+           entities (conj entities
+                          "multi_master_bus_mux"
+                          "multi_master_bus_muxff")
 
            vhdl-files (->> (get-file-list board-name)
                            (into [])
@@ -177,8 +190,16 @@
        (if (empty? vhdl-files)
          (println "No VHDL files found.")
          (let [{:keys [files data]} (soc-gen.parse/extract-all
-                                     vhdl-files
+                                     (into
+                                      vhdl-files
+                                      ;; Add additional VHDL files to parse list
+                                      (map
+                                       #(.getCanonicalPath (jio/file %))
+                                       (:extra-vhdl design)))
                                      :entities entities)]
+           ;; Now have information from design.edn and from parsing
+           ;; the VHDL. Combine and validate this information to
+           ;; produce a full design
            (if (and files data)
              (soc-gen.devices/combine-soc-description design files data)))))))
 
@@ -193,3 +214,36 @@
 
 (defn go [design]
   (generate-design (create-design design)))
+
+(defn go-all
+  ([] (go-all #".*"))
+  ([name-re]
+   (let [names
+         (->> (.listFiles (jio/file "../boards"))
+              (filter (fn [f] (and (.isDirectory f)
+                                  (some #(= "design.edn" (.getName %)) (.listFiles f)))))
+              (map #(.getName %)))
+         ignore (filter #(not (re-find name-re %)) names)
+         names (sort (filter #(re-find name-re %) names))
+         results (reduce
+                  (fn [results board]
+                    (println "Run" board)
+                    (assoc results board (go board)))
+                  {}
+                  names)]
+     {:success (sort (map key (filter val results)))
+      :fail (sort (map key (filter (comp not val) results)))
+      :ignore (sort ignore)})))
+
+(defn go-all-print
+  ([] (go-all-print #".*"))
+  ([name-re]
+   (let [{:keys [success fail ignore]} (go-all name-re)
+         pr-list (fn [desc names] (when (seq names)
+                              (println (count names) "builds" (str desc ":"))
+                              (doseq [n names]
+                                (println "   " n))))]
+     (pr-list "succeeded" success)
+     (pr-list "failed" fail)
+     (pr-list "ignored" ignore)
+     (and (boolean (seq success)) (not (boolean (seq fail)))))))

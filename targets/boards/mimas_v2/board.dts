@@ -1,0 +1,97 @@
+/dts-v1/;
+
+/ {
+	model = "mimas_v2";
+	compatible = "jcore,j2-soc";
+	#address-cells = <1>;
+	#size-cells = <1>;
+	interrupt-parent = <&aic>;
+
+	chosen {
+		stdout-path = "/soc@abcd0000/serial";
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+
+		cpu@0 {
+			device_type = "cpu";
+			compatible = "jcore,j2-0.1";
+			reg = <0>;
+		};
+	};
+
+	memory@10000000 {
+		device_type = "memory";
+		reg = <0x10000000 0x4000000>;
+	};
+
+	soc@abcd0000 {
+		compatible = "jcore,j2-soc", "simple-bus";
+		ranges = <0x0 0xabcd0000 0x240>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		timer {
+			compatible = "jcore,soc-pit-0.1";
+			reg = <0x200 0x30>;
+			cpu-offset = <0x300>;
+			interrupts = <0x10>;
+		};
+
+		aic: interrupt-controller {
+			#interrupt-cells = <1>;
+			compatible = "jcore,j2-soc-aic-0.1";
+			cpu-offset = <0x300>;
+			interrupt-controller;
+			reg = <0x200 0x40>; // ABCD0200-ABCD023F
+		};
+
+		cache-controller {
+			compatible = "jcore,soc-cache-0.1";
+			cpu-offset = <4>;
+			reg = <0xc0 0x40>; // ABCD00C0-ABCD00FF
+		};
+
+		gpio {
+			#gpio-cells = <2>;
+			compatible = "jcore,soc-gpio-0.1";
+			gpio-controller;
+			reg = <0x0 0x10>; // ABCD0000-ABCD000F
+			interrupts = <0x15>;
+		};
+
+		serial {
+			compatible = "xlnx,xps-uartlite-1.00.a";
+			current-speed = <19200>;
+			device_type = "serial";
+			port-number = <0>;
+			reg = <0x100 0x10>; // ABCD0100-ABCD010F
+			interrupts = <0x12>;
+		};
+
+		spi {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			compatible = "jcore,soc-spi-0.1";
+			spi-max-frequency = <12500000>;
+			status = "ok";
+			reg = <0x40 0x8>; // ABCD0040-ABCD0047
+
+			sdcard@1 {
+				compatible = "mmc-spi-slot";
+				reg = <1>;
+				spi-max-frequency = <12500000>;
+				voltage-ranges = <3200 3400>;
+				mode = <0>;
+			};
+		};
+	};
+
+	cpuid {
+		compatible = "jcore,soc-cpuid-0.1";
+		reg = <0xabcd0600 0x4>;
+	};
+};

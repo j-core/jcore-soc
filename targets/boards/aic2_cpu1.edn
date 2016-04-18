@@ -1,0 +1,12 @@
+{:class "aic2"
+ :name "aic1"
+ :cpu 1
+ :dt-node false
+ :base-addr 0xabcd0500
+ :generics {"c_busperiod" CFG_CLK_CPU_PERIOD_NS
+            "cpuid" 1}
+ :ports {"rtc_sec" nil
+         "rtc_nsec" nil
+         "enmi_i" {:value 1}
+         "event_i" "cpu1_event_o"
+         "event_o" "cpu1_event_i"}}

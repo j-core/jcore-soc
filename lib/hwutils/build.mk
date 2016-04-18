@@ -1,3 +1,13 @@
 $(VHDLS) += util_pkg.vhd
 $(VHDLS) += syncff.vhd
+$(VHDLS) += sync2ff.vhd
+$(VHDLS) += flagsync.vhd
 $(VHDLS) += attr_pkg.vhd
+$(VHDLS) += ddr_input.vhd
+$(VHDLS) += ddr_output.vhd
+$(VHDLS) += clock_output.vhd
+$(VHDLS) += global_buffer.vhd
+$(VHDLS) += flancter.vhd
+$(VHDLS) += guardflancter.vhd
+$(VHDLS) += gray_pkg.vhd
+$(VHDLS) += syncgray.vhd
