@@ -22,9 +22,12 @@ CONFIG_SA_WIDTH = 13
 CONFIG_DDRDQ_WIDTH = 16
 
 # 1GHz / 20 = 50MHz
-CONFIG_CLK_CPU_DIVIDE = 20
+CONFIG_CLK_CPU_DIVIDE ?= 20
 # 1GHz / 10 = 100MHz
-CONFIG_CLK_MEM_2X_DIVIDE = 10
+CONFIG_CLK_MEM_2X_DIVIDE ?= 10
+
+# PLLE2 (pll source of clk_cpu, clk_mem) 1GHz or more
+CONFIG_CLK_PLLE2_HZ ?= 1000000000
 
 # Because PLL VCO is 1GHz, the divide setting is also the period in
 # ns.
@@ -32,12 +35,9 @@ CONFIG_CLK_CPU_PERIOD_NS = $(CONFIG_CLK_CPU_DIVIDE)
 CONFIG_CLK_MEM_PERIOD_NS = $(shell echo $$(( 2 * $(CONFIG_CLK_MEM_2X_DIVIDE) )) )
 CONFIG_CLK_BITLINK_PERIOD_NS = 8
 
-# generic of components/ddr2/ddrc_phy.vhd
-# Correct value depends on clk_mem frequency
-# TODO: Set automatically?
-CONFIG_DDR_READ_SAMPLE_TM =  2
-
 #CONFIG_BUS_PERIOD = 40
 
 # ddr2/ddrc_cnt_pkg.vhd
 CONFIG_DDR_CK_CYCLE = $(CONFIG_CLK_MEM_PERIOD_NS)
+# dma channel number
+CONFIG_DMA_NUMCH = 64

@@ -12,6 +12,8 @@ architecture one_cpu_idcache of ddr_ram_mux is
   signal cpu_ddr_bus_i : cpu_data_i_t;
   signal instr_ddrburst : std_logic;
   signal data_ddrburst : std_logic;
+  signal instr_dbus_ack_r : std_logic;
+  signal data_dbus_ack_r : std_logic;
 begin
   u_icache : icache_adapter
     port map (
@@ -23,7 +25,8 @@ begin
       ibus_i => cpu0_ibus_i,
       dbus_o => instr_dbus_o,
       dbus_ddrburst => instr_ddrburst,
-      dbus_i => instr_dbus_i);
+      dbus_i => instr_dbus_i,
+      dbus_ack_r => instr_dbus_ack_r );
 
   u_dcache : dcache_adapter
     port map (
@@ -39,7 +42,8 @@ begin
       dbus_o => data_dbus_o,
       dbus_lock => open,
       dbus_ddrburst => data_ddrburst,
-      dbus_i => data_dbus_i);
+      dbus_i => data_dbus_i,
+      dbus_ack_r => data_dbus_ack_r );
 
   -- mux between instruction and data and dma : three masters
   u_bmuxc : bus_mux_typec port map (
@@ -50,25 +54,30 @@ begin
   m1_ddrburst   => data_ddrburst ,
   m1_lock       => '0'            ,
   m1_i          => data_dbus_o   ,
+  m1_ack_r      => data_dbus_ack_r ,
 
   m2_o          => instr_dbus_i  ,
   m2_ddrburst   => instr_ddrburst ,
   m2_i          => instr_dbus_o  ,
+  m2_ack_r      => instr_dbus_ack_r ,
 
   m3_o          => open          ,
   m3_ddrburst   => '0'           ,
   m3_lock       => '0'           ,
   m3_i          => NULL_DATA_O   ,
+  m3_ack_r      => open ,
 
   m4_o          => open          ,
   m4_ddrburst   => '0'           ,
   m4_i          => NULL_DATA_O   ,
+  m4_ack_r      => open ,
 
   m5_o          => dma_dbus_i    ,
   m5_i          => dma_dbus_o    ,
   mem_o         => ddr_bus_o     ,
   mem_ddrburst  => ddr_burst     ,
-  mem_i         => ddr_bus_i     
+  mem_i         => ddr_bus_i     ,
+  mem_ack_r         => ddr_bus_ack_r     
       );
 
   -- terminate unused cpu1 buses

@@ -61,7 +61,8 @@ package misc_pack is
   end component i2sctrl;
 
   component aic is
-    generic (c_busperiod : integer := 40);
+    generic (c_busperiod : integer := 40;
+             rtc_sec_length34b : boolean := false);
     port (
       clk_bus : in std_logic;
       rst_i : in std_logic;

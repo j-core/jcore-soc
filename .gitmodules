@@ -4,3 +4,6 @@
 [submodule "components/cpu"]
 	path = components/cpu
 	url = ../jcore-cpu
+[submodule "components/gps_if2"]
+	path = components/gps_if2
+	url = ../gnss-baseband

@@ -1,0 +1,169 @@
+#! /bin/csh -f
+
+# BOARD option check
+# BOARDS= { soc1_evb2, soc1_sau1, turtle_1vX, soc2_sau1,  none }
+#   memo: for other BOARDS string, soc_gen phase 2 only processes byte-bus.
+
+echo $1 | sed -e "s/_1v./_1vX/" > tmp.sg.001
+echo "soc1_evb2"  > tmp.sg.002
+echo "soc1_sau1"  > tmp.sg.003
+echo "turtle_1vX" > tmp.sg.004
+echo "soc2_sau1"  > tmp.sg.014
+echo ""           > tmp.sg.005
+
+diff tmp.sg.001 tmp.sg.002 > tmp.sg.006
+diff tmp.sg.001 tmp.sg.003 > tmp.sg.007
+diff tmp.sg.001 tmp.sg.004 > tmp.sg.008
+diff tmp.sg.001 tmp.sg.005 > tmp.sg.009
+diff tmp.sg.001 tmp.sg.014 > tmp.sg.015
+
+echo DISABLE > tmp.sg.011.dos6evb
+echo DISABLE > tmp.sg.012.dos6sau
+echo DISABLE > tmp.sg.013.dos6tur
+echo DISABLE > tmp.sg.016.dok7sau
+
+if (-z  tmp.sg.006) then
+  cp -p tmp.sg.006 tmp.sg.011.dos6evb
+endif
+if (-z  tmp.sg.007) then
+  cp -p tmp.sg.007 tmp.sg.012.dos6sau
+endif
+if (-z  tmp.sg.008) then
+  cp -p tmp.sg.008 tmp.sg.013.dos6tur
+endif
+if (-z  tmp.sg.015) then
+  cp -p tmp.sg.015 tmp.sg.016.dok7sau
+endif
+if (-z  tmp.sg.009) then
+  cp -p tmp.sg.009 tmp.sg.011.dos6evb
+  cp -p tmp.sg.009 tmp.sg.012.dos6sau
+  cp -p tmp.sg.009 tmp.sg.013.dos6tur
+  cp -p tmp.sg.009 tmp.sg.016.dok7sau
+endif
+
+# byte bus --------
+  script/sh_p02_51_exec_byte
+
+# exec board (soc1_evb2) 
+if (-z tmp.sg.011.dos6evb) then
+  set BRDDIR = ../../boards/soc1_evb2
+  # keep phase1
+  cp -p $BRDDIR/devices.vhd   $BRDDIR/devices.vhd_ph1
+  cp -p $BRDDIR/soc.vhd       $BRDDIR/soc.vhd_ph1
+  cp -p $BRDDIR/pad_ring.vhd  $BRDDIR/pad_ring.vhd_ph1
+
+  # convert (four awk)
+  cat $BRDDIR/design.ph2_c \
+      $BRDDIR/devices.vhd_ph1 | \
+    awk -f script/awk_p02_01_wordack \
+  >   $BRDDIR/word_ack_gen.vhd
+
+  # script/sh_p02_61 .. delay related (logically equivalent) 
+  cat $BRDDIR/design.ph2_c \
+      $BRDDIR/devices.vhd_ph1 | \
+    sed -e '/Instantiate devices/,$s/ entity .*(/&#/' \
+        -e 's/(#/#E#/' | \
+    awk -f script/awk_p02_02_devices | \
+    script/sh_p02_61_device_order_soc1_evb2 \
+  >   $BRDDIR/devices.vhd
+
+  # remove dsm_realign_pack .. delay related (as long as removable)
+  awk -f script/awk_p02_03_soc \
+  <   $BRDDIR/soc.vhd_ph1 | \
+    sed -e 's/use work.dsm_realign_pack.all;/-- &/' \
+  >   $BRDDIR/soc.vhd
+
+  # remove dsm_realign_pack .. delay related (as long as removable)
+  awk -f script/awk_p02_04_pad_r \
+  <   $BRDDIR/pad_ring.vhd_ph1 | \
+    sed -e 's/use work.dsm_realign_pack.all;/-- &/' \
+  >   $BRDDIR/pad_ring.vhd
+  echo "soc_gen (ph2) board rewrite (soc1_evb2)-- done"
+endif
+
+# exec board (soc1_sau1) 
+if (-z tmp.sg.012.dos6sau) then
+  set BRDDIR = ../../boards/soc1_sau1
+  # keep phase1
+  cp -p $BRDDIR/devices.vhd   $BRDDIR/devices.vhd_ph1
+  cp -p $BRDDIR/soc.vhd       $BRDDIR/soc.vhd_ph1
+  cp -p $BRDDIR/pad_ring.vhd  $BRDDIR/pad_ring.vhd_ph1
+
+  # convert (four awk)
+  cat $BRDDIR/design.ph2_c \
+      $BRDDIR/devices.vhd_ph1 | \
+    awk -f  script/awk_p02_01_wordack \
+  >   $BRDDIR/word_ack_gen.vhd
+
+  cat $BRDDIR/design.ph2_c \
+      $BRDDIR/devices.vhd_ph1 | \
+    sed -e '/Instantiate devices/,$s/ entity .*(/&#/' \
+        -e 's/(#/#E#/' | \
+    awk -f script/awk_p02_02_devices \
+  >   $BRDDIR/devices.vhd
+
+  # remove dsm_realign_pack .. delay related (as long as removable)
+  awk -f script/awk_p02_03_soc \
+  <   $BRDDIR/soc.vhd_ph1 | \
+    sed -e 's/use work.dsm_realign_pack.all;/-- &/' \
+  >   $BRDDIR/soc.vhd
+
+  # remove dsm_realign_pack .. delay related (as long as removable)
+  awk -f script/awk_p02_04_pad_r \
+  <   $BRDDIR/pad_ring.vhd_ph1 | \
+    sed -e 's/use work.dsm_realign_pack.all;/-- &/' \
+  >   $BRDDIR/pad_ring.vhd
+  echo "soc_gen (ph2) board rewrite (soc1_sau1)-- done"
+endif
+
+# exec board (turtle_1vX) 
+# turtle_1vX conversion : no 8-bit, only word_ack_gen
+if (-z tmp.sg.013.dos6tur) then
+  set BRDDIR = ../../boards/$1
+  # keep phase1
+  cp -p $BRDDIR/devices.vhd   $BRDDIR/devices.vhd_ph1
+
+  # convert (two awk)
+  cat $BRDDIR/design.ph2_c \
+      $BRDDIR/devices.vhd_ph1 | \
+  awk -f  script/awk_p02_01_wordack \
+  >   $BRDDIR/word_ack_gen.vhd
+
+  cat $BRDDIR/design.ph2_c \
+      $BRDDIR/devices.vhd_ph1 | \
+    sed -e '/Instantiate devices/,$s/ entity .*(/&#/' \
+        -e 's/(#/#E#/' | \
+    awk -f script/awk_p02_02_devices \
+  >   $BRDDIR/devices.vhd
+
+  echo "soc_gen (ph2) board rewrite ($1)-- done"
+endif
+
+# exec board (soc2_sau1) 
+# process small edit (multiply awk convert is OK, for these easy awk,
+#                     for future flexibility)
+if (-z tmp.sg.016.dok7sau) then
+  set BRDDIR = ../../boards/soc2_sau1
+
+  # keep phase1
+  cp -p $BRDDIR/devices.vhd      $BRDDIR/devices.vhd_ph1
+  cp -p $BRDDIR/soc.vhd          $BRDDIR/soc.vhd_ph1
+  cp -p $BRDDIR/pad_ring.vhd     $BRDDIR/pad_ring.vhd_ph1
+  awk -f script/awk_p02_06_soc2_sau1dev \
+    < $BRDDIR/devices.vhd_ph1  > $BRDDIR/devices.vhd
+  awk -f script/awk_p02_07_soc2_sau1soc \
+    < $BRDDIR/soc.vhd_ph1      > $BRDDIR/soc.vhd
+  awk -f script/awk_p02_08_soc2_sau1pad \
+    < $BRDDIR/pad_ring.vhd_ph1 > $BRDDIR/pad_ring.vhd
+
+  echo "soc_gen (ph2) board rewrite (soc2_sau1)-- done"
+endif
+
+/bin/rm tmp.sg.001 tmp.sg.002 tmp.sg.003 tmp.sg.004 
+/bin/rm tmp.sg.005 tmp.sg.006 tmp.sg.007 tmp.sg.008
+/bin/rm tmp.sg.009
+/bin/rm tmp.sg.014 tmp.sg.015
+/bin/rm tmp.sg.011.dos6evb tmp.sg.012.dos6sau
+/bin/rm tmp.sg.013.dos6tur tmp.sg.016.dok7sau
+
+echo 'soc_gen_ph2 : shell finish'

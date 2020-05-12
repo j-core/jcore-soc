@@ -1,0 +1,63 @@
+CONFIG VCCAUX="3.3";
+
+# ----------------------------------------------------------------------------
+# Clocks
+# ----------------------------------------------------------------------------
+
+NET "PIN_25MHz" TNM_NET = CLOCK_25MHZ | IOSTANDARD = LVCMOS33;
+TIMESPEC TS_CLOCK_25MHZ = PERIOD CLOCK_25MHZ 25 MHz;
+
+# ----------------------------------------------------------------------------
+# DDR
+# ----------------------------------------------------------------------------
+
+INST "ddr_iocells/*" AREA_GROUP = "ddr";
+INST "soc/ddr_ctrl/*" AREA_GROUP = "ddr";
+#This range constraint results in a bad timing score
+#AREA_GROUP "ddr" RANGE=SLICE_X0Y8:SLICE_X5Y71;
+
+# ----------------------------------------------------------------------------
+# CPUs
+# ----------------------------------------------------------------------------
+
+INST "soc/cpus/*" AREA_GROUP = "mcu";
+#This range constraint results in a bad timing score
+#AREA_GROUP "mcu" RANGE=SLICE_X8Y16:SLICE_X29Y63;
+
+# ----------------------------------------------------------------------------
+# GPIO
+# ----------------------------------------------------------------------------
+# Disable timing on pins where it's not important. This should simplifing routing.
+
+NET pin_cfg_sel TIG;
+
+# ----------------------------------------------------------------------------
+# LEDs
+# ----------------------------------------------------------------------------
+
+NET PIN_LED1		TIG;
+NET PIN_LED2		TIG;
+
+# ----------------------------------------------------------------------------
+# GPS IF clock crossing
+# ----------------------------------------------------------------------------
+NET "clkin25_clkgen/clkout5"      TNM_NET = gpsif_clk;
+NET "clkin25_clkgen/clkout0"      TNM_NET = sys_clk;
+TIMESPEC TS_01 = FROM "sys_clk" TO "gpsif_clk" TIG;
+TIMESPEC TS_02 = FROM "gpsif_clk" TO "sys_clk" TIG;
+
+# ----------------------------------------------------------------------------
+# Ethernet
+# ----------------------------------------------------------------------------
+# EMAC clocks
+#NET "soc/devices/emac/rx_clk" TNM_NET = erx_clk;
+#TIMESPEC TS_ERX_CLOCK = PERIOD erx_clk 25 MHz;
+#NET "soc/devices/emac/tx_clk" TNM_NET = etx_clk;
+#TIMESPEC TS_ETX_CLOCK = PERIOD etx_clk 25 MHz;
+
+#INST "soc/devices/emac/u_rmii/prev_crsdv_1" IOB = TRUE;
+#INST "soc/devices/emac/u_rmii/prev_rx_er" IOB = TRUE;
+#RXD1
+#INST "soc/devices/emac/u_rmii/prev_mrxd_3" IOB = TRUE;
+#RXD0
+#INST "soc/devices/emac/u_rmii/prev_mrxd_2" IOB = TRUE;

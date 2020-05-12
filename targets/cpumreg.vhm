@@ -19,7 +19,9 @@ entity cpumreg is
   db0_o : out cpu_data_i_t;
   db1_o : out cpu_data_i_t;
   cpu0ram_a_en : out std_logic;
-  cpu1ram_a_en : out std_logic
+  cpu1ram_a_en : out std_logic;
+  -- cpu1 enable control from SBU
+  cpu1en_sbu : in std_logic
 );
 end cpumreg;
 
@@ -30,7 +32,7 @@ architecture asic of cpumreg is
   register variable this : cpumreg_reg_t reset := CPUMREG_REG_RESET;
 
 begin
-  this : process(this, db0_i, db1_i, ram0_arb_o, ram1_arb_o)
+  this : process(this, db0_i, db1_i, ram0_arb_o, ram1_arb_o, cpu1en_sbu)
     register this when clk = '1' and clk'event reset when rst = '1';
 
   variable nx              : cpumreg_reg_t;
@@ -99,6 +101,10 @@ begin
     if   (db0_i.a(7 downto 2) = b"010000") and
       (db0_i.en = '1') and (db0_i.wr = '1') then
       this.cpu1en := db0_i.d(0);
+    end if;
+
+    if(cpu1en_sbu = '1') then
+      this.cpu1en := '1';
     end if;
   -- ff substitute
     this.state_ramarb := nx.state_ramarb;

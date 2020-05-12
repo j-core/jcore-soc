@@ -18,9 +18,9 @@ entity pio is
 -- synopsys translate_off
 	group bus_sigs : bus_signals(irq,db_i, db_o);
 -- synopsys translate_on
-	attribute sei_port_irq of irq : signal is true;
-	attribute sei_port_global_name of p_o : signal is "po";
-	attribute sei_port_global_name of p_i : signal is "pi";
+	attribute soc_port_irq of irq : signal is true;
+	attribute soc_port_global_name of p_o : signal is "po";
+	attribute soc_port_global_name of p_i : signal is "pi";
 end entity pio;
 
 architecture beh of pio is

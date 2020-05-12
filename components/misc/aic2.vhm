@@ -5,14 +5,25 @@ use ieee.numeric_std.all;
 use work.cpu2j0_pack.all;
 use work.aic2_pack.all;
 use work.misc_pack.all;
+use work.cache_pack.all;
+use work.data_bus_pack.all;
 
--- generic cpuid to provided to remove "cpu-0 only logic"
--- for cpuid = 1, 2, 3, ... aics
+-- generic cpuid effect
+--   (1) removes "cpu-0 only logic"
+--       for cpuid = 1, 2, 3, ... aics (64 event source flip-flops, etc.)
+--   (2) SBU cpuid register, receive access cache-reg memory-mapped 
+--       0xabcd0c00 + {0/4} and reflect SBR6, cache invalidate signal
+-- generic cache_exist effect
+--       controls SBR6 bit 31 (cache existence bit)
 
 entity aic2 is
         generic (c_busperiod : integer := 40;
         cpuid       : integer :=  0;
-        IRQ_SI0_NUM : integer :=  78;
+        cache_exist : integer :=  1;
+        busperiod_integer_ns : boolean := true;
+        busperiodni_numer : integer := 80;
+        busperiodni_denom : integer :=  7;
+        IRQ_SI0_NUM : integer :=  97;
         IRQ_SI1_NUM : integer := (78 + 1);
         IRQ_SI2_NUM : integer := (78 + 2);
         IRQ_SI3_NUM : integer := (78 + 3);
@@ -33,7 +44,16 @@ entity aic2 is
         irq_s_i     : in  std_logic_vector( 7 downto 0) := (others => '0');
         enmi_i      : in  std_logic;
         event_i : in cpu_event_o_t;
-        event_o : out cpu_event_i_t
+        event_o : out cpu_event_i_t;
+        cpa       : in  cop_o_t;
+        cpy       : out cop_i_t;
+        cacheb_ctrl_ic : out cache_ctrl_t;
+        cacheb_ctrl_dc : out cache_ctrl_t;
+        aic_com_o : out aiccom_io_t;
+        aic_com_i : in  aiccom_io_t;
+        db_cctrans_o : in tracpu_data_o_t; -- to snoop cache_modereg, temporary
+        cpu1eni   : out std_logic;
+        reboot    : out std_logic
         );
 end aic2;
 
@@ -45,7 +65,7 @@ architecture behav of aic2 is
   signal event_info : std_logic_vector(11 downto 0);
 
 begin
-  p0 : process (this, rst_i, db_i, irq_grp_i, irq_s_i, enmi_i, event_i )
+  p0 : process (this, rst_i, db_i, irq_grp_i, irq_s_i, enmi_i, cpa, event_i, aic_com_i, db_cctrans_o )
 
     register this when clk_sys='1' and clk_sys'event reset when rst_i='1';
 
@@ -54,8 +74,15 @@ begin
   -- --------------------------------------------------------------------------
   variable nx                  : aictwo_reg_t;
   -- 
+  variable aic_compre_o    : aiccom_io_t;
+  variable ccop_self_icinv     : std_logic;
+  variable ccop_self_dcinv     : std_logic;
   variable db_o_ack            : std_logic;
   variable db_o_d              : std_logic_vector(31 downto 0);
+  variable dcinv_0             : std_logic;
+  variable dcinv_1             : std_logic;
+  variable icinv_0             : std_logic;
+  variable icinv_1             : std_logic;
   variable id_non_zero_mask_bn : std_logic_vector(63 downto 0);
   variable id_non_zero_mask_rr : std_logic_vector(30 downto 0);
   variable irqsiedge_det       : std_logic_vector( 7 downto 0);
@@ -63,11 +90,26 @@ begin
   variable s_nmi               : std_logic;
   variable s_pit               : std_logic;
   variable s_mrs               : std_logic;
+  variable update_sbr0_7       : std_logic;
+  variable wnum_ma_4b          : std_logic_vector( 3 downto 0);
+  variable val_count_enable    : std_logic;
+  variable val_gsel            : std_logic_vector(2 downto 0);
+  variable val_pit_enable      : std_logic;
+  variable val_pit_irqnuma     : std_logic_vector(5 downto 0);
+  variable val_pit_irqnumb     : std_logic_vector(3 downto 0);
+  variable val_pit_flag        : std_logic;
+  --
+  variable sbu_cpa_op8b        : std_logic_vector( 7 downto 0); 
+  variable sbu_cpy_ack         : std_logic;
+  variable busperiodni_c_int   : integer ;
+  variable busperiodni_c_mod   : integer ;
   -- 
   variable tmp2b_1             : std_logic_vector( 1 downto 0);
   variable tmp2b_2             : std_logic_vector( 1 downto 0);
   variable tmp4b               : std_logic_vector( 3 downto 0);
+  variable tmp5b               : std_logic_vector( 4 downto 0);
   variable tmp6b               : std_logic_vector( 5 downto 0);
+  variable tmp12b              : std_logic_vector(11 downto 0);
   variable tmp15b              : std_logic_vector(14 downto 0);
   variable tmp64b              : std_logic_vector(63 downto 0);
   variable tmpj                : integer range 0 to 15;
@@ -79,15 +121,41 @@ begin
   nx := this; -- set all nx variable
  
   -- process <-> part1, 2, ..., 8 --------------------------------------------- 
+  busperiodni_c_int := (busperiodni_numer / busperiodni_denom);
+  busperiodni_c_mod := (busperiodni_numer mod busperiodni_denom);
   -- part 1 rtc ---------------------------------------------------------------
   -- part 1.1 - counber based
   if this.reg_rtc_nsec >=
      std_logic_vector(to_unsigned(1e9, this.reg_rtc_nsec'length)) then
-    nx.reg_rtc_nsec := this.reg_rtc_nsec - (1e9 - c_busperiod); --999999960;
+    -- count up sec block 
+    if busperiod_integer_ns then
+      nx.reg_rtc_nsec := this.reg_rtc_nsec - (1e9 - c_busperiod); --999999960;
+    elsif(this.busni_numer_cnt < busperiodni_c_mod) then
+      nx.reg_rtc_nsec := this.reg_rtc_nsec - (1e9 - (busperiodni_c_int + 1));
+    else
+      nx.reg_rtc_nsec := this.reg_rtc_nsec - (1e9 - (busperiodni_c_int + 0));
+    end if;
     nx.reg_rtc_sec  := this.reg_rtc_sec + 1;
+    -- end of count up sec block 
   else
-    nx.reg_rtc_nsec := this.reg_rtc_nsec + c_busperiod;
+    -- non-count up sec block 
+    if busperiod_integer_ns then
+      nx.reg_rtc_nsec := this.reg_rtc_nsec + c_busperiod;
+    elsif(this.busni_numer_cnt < busperiodni_c_mod) then
+      nx.reg_rtc_nsec := this.reg_rtc_nsec + busperiodni_c_int + 1;
+    else
+      nx.reg_rtc_nsec := this.reg_rtc_nsec + busperiodni_c_int + 0;
+    end if;
     nx.reg_rtc_sec  := this.reg_rtc_sec;
+    -- end of non-count up sec block 
+  end if;
+
+  if not busperiod_integer_ns then
+    if(this.busni_numer_cnt = busperiodni_denom - 1) then
+         nx.busni_numer_cnt := 0;
+    else nx.busni_numer_cnt := this.busni_numer_cnt + 1; end if;
+  else
+         nx.busni_numer_cnt := 0;
   end if;
 
   -- part 1.2 - cpu acc based
@@ -100,19 +168,7 @@ begin
     end case;
   end if;
 
-  -- part 2 debug and wake up (both are small FSM) -----------------------------
-  case this.db_state is
-  when db_init => 
-    if this.irq_bynum(82 - 64) = '1' then
-      nx.db_state := DB_INT;
-      nx.db_count := this.db_count + 1;
-    end if;
-  when others => -- when db_count
-    if this.irq_bynum(82 - 64) = '0' then
-      nx.db_state := DB_INIT;
-      nx.db_count := this.db_count + 1;
-    end if;
-  end case;
+  -- part 2 wake up and db_o_ack ----------------------------------------------
 
   case this.wakeup_state is
   when RESET  => nx.wakeup_state := WAKE1;
@@ -125,40 +181,40 @@ begin
   else                                              db_o_ack := '0'; end if;
   db_o.ack <=                                       db_o_ack;
 
-  -- part 3 register read ------------------------------------------------------
-  --    -- Registe layout for reads
-        -- addr bits
-        -- 5432   Contents
+  -- part 3 register read , globally refered val_.. set ------------------------
+  --    -- S Registe layout for reads
+        -- B  addr bits
+        -- R 5432   Contents
         -----------------------------------
-        -- 0000 - "00000" & pit_enable & count_enable & brk_enable & 
-        --          pit_irqnumrb & "00" & pit_irqnuma 
-        --          & count
-        -- 0001 - zero
-        -- 0010 - zero
-        -- 0011 - irq_i & q_irq(sample) & pit_flag & db_ackcount & db_count
-        -- 0100 - PIT throttle
-        -- 0101 - PIT counter
-        -- 0110 - Bus clock period in nanoseconds
-        -- 0111 - zero
-        -- 1x00 - RTC seconds upper 32 bits
-        -- 1x01 - RTC seconds lower 32 bits
-        -- 1x10 - RTC nanoseconds
-        -- 1x11 - zero
+        -- 0 0000 - "00000" & pit_enable & count_enable & brk_enable & 
+        --            pit_irqnumrb & "00" & pit_irqnuma 
+        --            & count
+        -- - 0001 - zero
+        -- - 0010 - zero
+        -- 1 0011 - irq_i & q_irq(sample) & pit_flag & db_ackcount & db_count
+        -- 2 0100 - PIT throttle
+        -- 3 0101 - PIT counter
+        -- 4 0110 - Bus clock period in nanoseconds
+        -- - 0111 - zero
+        -- - 1x00 - RTC seconds upper 32 bits
+        -- - 1x01 - RTC seconds lower 32 bits
+        -- - 1x10 - RTC nanoseconds
+        -- - 1011 - zero
+        -- - 1111 - reboot
 
   -- cpu (or dma) read data address selector
   case db_i.a(5 downto 2) is
-  when x"0"        =>     db_o_d := b"00000" & this.pit_enable &
-                                    this.count_enable & '0' &
-                                    this.pit_irqnumb & b"00" &
-                                    this.pit_irqnuma & this.count;
-                                      -- ---------------- 5+1+1+1+4+2+6+12 = 32
+  when x"0"        =>     db_o_d := this.sbu_regfile(0);
   when x"1" | x"2" =>     db_o_d := (others => '0');
-  when x"3"        =>     db_o_d := this.irqsample_i & this.q_irqs & 
-                                    this.pit_flag & this.gsel & x"00" &
-                                    this.db_count;
+  when x"3"        =>     db_o_d := this.sbu_regfile(1);
+
+--                                  this.irqsample_i & this.q_irqs & 
+--                                  this.pit_flag & this.gsel & x"00" &
+--                                  this.db_count;
+
                                       -- --------------------- 8+8+1+3+8+4 = 32
-  when x"4"        =>     db_o_d := this.pit_throttle;
-  when x"5"        =>     db_o_d := this.pit_cntr;
+  when x"4"        =>     db_o_d := this.sbu_regfile(2);
+  when x"5"        =>     db_o_d := this.sbu_regfile(3);
   when x"6"        =>     db_o_d := std_logic_vector(to_unsigned(c_busperiod, 
                                     db_o_d'length));
   when x"7"        =>     db_o_d := (others => '0');
@@ -170,9 +226,11 @@ begin
   end case;
   db_o.d <=               db_o_d;
 
-  -- read 2cycle (internally 2cycle gsel phase + db_o_d phase)
-  nx.q_irqs := this.irq_bynum((8 * vtoi(this.gsel) + 7) downto
-                              (8 * vtoi(this.gsel) + 0));
+
+--nx.q_irqs := this.irq_bynum((8 * vtoi(this.gsel) + 7) downto
+--                            (8 * vtoi(this.gsel) + 0));
+
+  val_pit_enable := this.sbu_regfile(0)(26);
 
   -- part 4 reg_event , priority (1cycle early) -------------------------------
   if   (this.r_mrst = '1') then -----------------------------------------------
@@ -236,7 +294,7 @@ begin
                                            -- level i (2-15), level-wise valid 
       tmp2b_1 := this.roundrobin_ptr((2 * i + 0) downto
                                      (2 * i - 1));
-      tmp4b   := this.irq_bynum     ((4 * i + 3) downto
+      tmp4b := this.irq_bynum     ((4 * i + 3) downto
                                      (4 * i + 0));
                                                  tmp6b := 
       tmp4b(0) & tmp4b(1) & tmp4b(2) & tmp4b(3) & 
@@ -272,24 +330,41 @@ begin
   -- write main
   if(db_i.en = '1') and (db_i.wr = '1') then
     case db_i.a(5 downto 2) is
-    when x"0"            => if(this.pit_enable = '0') then
-                              nx.pit_irqnumb   := db_i.d(23 downto 20);
-                              nx.pit_irqnuma   := db_i.d(17 downto 12); end if;
+    when x"0"            =>
                             if(db_i.we(3) = '1') then
                               s_nmi    := db_i.d(31);
                               s_pit    := db_i.d(30);
                               s_mrs    := db_i.d(27);
                             end if;
-                            nx.pit_enable   := db_i.d(26);
-                            nx.count_enable := db_i.d(25);
-                            nx.count        := db_i.d(11 downto 0);
+
+          -- before merge   if(this.pit_enable = '0') then
+          -- before merge     nx.pit_irqnumb   := db_i.d(23 downto 20);
+          -- before merge     nx.pit_irqnuma   := db_i.d(17 downto 12); end if;
+          -- before merge   nx.pit_enable   := db_i.d(26);
+          -- before merge   nx.count_enable := db_i.d(25);
+          -- before merge   nx.count        := db_i.d(11 downto 0);
+
+                            if(this.sbu_regfile(0)(26) = '0') or
+                              (db_i.d(26) = '0') then
+                              nx.sbu_regfile(0)         (23 downto 20):=
+                                                  db_i.d(23 downto 20);
+                              nx.sbu_regfile(0)         (17 downto 12):=
+                                                  db_i.d(17 downto 12); end if;
+                            nx.sbu_regfile(0)(26) := db_i.d(26);
+                            nx.sbu_regfile(0)(25) := db_i.d(25);
+                            nx.sbu_regfile(0)           (11 downto 0) :=
+                                                  db_i.d(11 downto 0);
+
+
     when x"1" | x"2"     =>     -- no reg
-    when x"3"            => nx.gsel         := db_i.d(14 downto 12);
-    when x"4"            => if(this.pit_enable = '0') then
-                              nx.pit_throttle := db_i.d; end if;
+    when x"3"            => nx.sbu_regfile(1)           (14 downto 12) :=
+                                                  db_i.d(14 downto 12);
+    when x"4"            => if(val_pit_enable = '0') then
+                              nx.sbu_regfile(2) := db_i.d; end if;
     when x"5" | x"6"     =>     -- read only register
     when x"7"            =>     -- no reg
     when x"8" | x"9" | x"a" => -- described in RTC 
+    when x"f"            => nx.reboot          := db_i.d(0);
     when others          =>     -- no reg
     end case;
   end if;
@@ -297,23 +372,255 @@ begin
 
   -- pit_throttle special : update immediately after reset
   if(this.wakeup_state = WAKE2) then 
-    nx.pit_throttle := std_logic_vector(to_unsigned(1e9 / 100 / c_busperiod,
-                                        nx.pit_throttle'length));
+    nx.sbu_regfile(2) := std_logic_vector(to_unsigned(1e9 / 100 / c_busperiod,
+                                        32));
   end if;
 
-  -- part 6 misc --------------------------------------------------------------
+  -- part 6 SBU coprcessor control, general = ---------------------------------
+  -- ------- full bit SBR0-SBR7 assumption ------------------------------------
+
+  -- read write register number (ID stage combinational) ----------------------
+  if(cpa.stallcp = '1') then
+       nx.sbu_num_ex := this.sbu_num_ex;
+  else nx.sbu_num_ex := '0' & cpa.rna; end if;
+
+  if(cpa.stallcp = '1') then
+       nx.sbu_rnum_ma := this.sbu_rnum_ma;
+  else nx.sbu_rnum_ma := this.sbu_num_ex; end if;
+
+  -- write number (EX stage combinational) ------------------------------------
+  sbu_cpa_op8b := b"000" & cpa.op; -- to display 8 bit x"@@"
+
+  -- default value start
+                             tmp5b := (others => '0');
+  -- default value end
+  if(cpa.stallcp = '1') then tmp5b := this.sbu_wnum_ma;
+  elsif(cpa.en = '1') then
+    case sbu_cpa_op8b is
+    when x"1d" | x"11" =>    tmp5b := '1' & x"9";  -- op_1d=LDS, 11=CLDS
+    when x"10"         =>                          -- op_10=CSTS
+      if(this.sbu_num_ex(3) = '0') or
+        (this.sbu_num_ex    = x"8") then           -- decode write to SBR0-SBR8
+                             tmp5b := '1' & this.sbu_num_ex(3 downto 0);
+      end if;
+    when others        =>                          -- STS and NOP's
+    end case;
+  end if;
+  nx.sbu_wnum_ma          := tmp5b;
+
+  if(cpa.stallcp = '1') then nx.sbu_oplds_ma := this.sbu_oplds_ma;
+  elsif(sbu_cpa_op8b = x"1d") then
+                             nx.sbu_oplds_ma := '1';
+  else                       nx.sbu_oplds_ma := '0'; end if;
+
+  -- write (MA stage combinational) -------------------------------------------
+  -- initial value start
+                             aic_compre_o := ( '0', '0', '0', '0', '0',
+  '0', '0');
+                             dcinv_0   := '0'; icinv_0 := '0';
+         update_sbr0_7       := '0';
+  -- initial value end
+
+  wnum_ma_4b := this.sbu_wnum_ma(3 downto 0); -- for multiple reference
+
+  --
+  if(    this.sbu_wnum_ma(4) =  '1') and (cpa.stallcp = '0') then
+    if(  this.sbu_wnum_ma
+                (3 downto 0) = x"9") then
+    -- CP0_COM update ---------------------------------------------------------
+      if(this.sbu_oplds_ma   =  '1') then
+                                     nx.sbu_regfile(9) := cpa.d; -- LDS  update
+      elsif(
+         this.sbu_rnum_ma(3) =  '0') then
+                                     nx.sbu_regfile(9) := 
+                                   this.sbu_regfile(vtoi(this.sbu_rnum_ma
+                                      (2 downto 0))) ; -- CLDS (cop.r0-7 exist)
+      else                           nx.sbu_regfile(9) := x"00000000";
+      end if;                                      -- +-- CLDS (cop.r8-15)
+    -- CP0_Rn  update ---------------------------------------------------------
+    else 
+      update_sbr0_7       := '1';    -- for   SBR0-7 all eight regs
+      if(wnum_ma_4b = "0011") or 
+        (wnum_ma_4b = "0111"       ) then        -- write SBR3, SBR7
+                                     -- << SBU specific >>
+                                     -- do nothing , remove effect 
+                                     -- instead of decodeing in part 7
+      else                           -- write SBR0-2 4-6 six regs
+        if(wnum_ma_4b(3) = '0') or
+          (wnum_ma_4b    = x"8"    ) then
+                                     nx.sbu_regfile(vtoi(wnum_ma_4b)) := 
+                                   this.sbu_regfile(9); end if; -- CSTS update
+      end if;
+    end if; -- end of if(this.sbu_wnum_ma(3 down..) = '1') ...
+    -- end of CP0_COM, CP0_Rn update ------------------------------------------
+  end if; -- end of if(cpa.stallcp = '0' and) ...
+  --
+
+  -- cache op communication out, when CSTS update 
+  if(update_sbr0_7 = '1') and (wnum_ma_4b = "0110") then -- about to write SBR6
+         tmp12b := this.sbu_regfile(9)(11 downto 0);
+                         aic_compre_o.dcinv :=
+         tmp12b(11);
+                         aic_compre_o.icinv :=
+         tmp12b(10);
+                         dcinv_0                :=
+         tmp12b( 9);
+                         icinv_0                :=
+         tmp12b( 8);
+    case tmp12b( 5 downto 4) is -- manup. other d$
+      when b"11"  =>     aic_compre_o.dc_enable_ot  := '1';
+      when b"10"  =>     aic_compre_o.dc_disable_ot := '1';
+      when others =>
+    end case;
+    case tmp12b( 3 downto 2) is -- manup. other i$
+      when b"11"  =>     aic_compre_o.ic_enable_ot  := '1';
+      when b"10"  =>     aic_compre_o.ic_disable_ot := '1';
+      when others =>
+    end case;
+  end if; -- end of if(this.sbu_wnum_ma ...
+  -- cache op communication out
+
+  -- cpu1 en write detect -----
+  if(update_sbr0_7 = '1') and (wnum_ma_4b = "0111") then -- about to write SBR7
+      if(  this.sbu_regfile(9)(11 downto 8) = x"f") and
+        (  this.sbu_regfile(9)(0) = '1') then
+        nx.cpu1eni := '1'; end if;
+      if(  this.sbu_regfile(9)(11 downto 8) = x"0") and
+        (((this.sbu_regfile(9)(0) = '1') and (cpuid = 0)) or
+         ((this.sbu_regfile(9)(0) = '0') and (cpuid = 1))) then
+        aic_compre_o.ipi := '1'; -- initialilize as aic_compre_o group
+      end if;
+  end if;
+  -- cpu1 en write detect -----
+
+  -- output signal
+  aic_com_o           <= aic_compre_o;
+
+  -- part 7 SBU coprcessor control, specific = --------------------------------
+  -- ------- SBR0-SBR7 non-existance / read only bit effect -------------------
+  -- ------- where, write has no effect ---------------------------------------
+  -- SBR0 : PTI, 12 bit counter (partially writable)
+    nx.sbu_regfile(0)(31 downto 27) :=  b"00000";
+    nx.sbu_regfile(0)(19 downto 18) :=  b"00";
+    -- pit_enable conditionall update (special)
+    if(this.sbu_regfile(0)(26) = '1') and
+      (  nx.sbu_regfile(0)(26) = '1') then
+        nx.sbu_regfile (0)(23 downto 20) := 
+      this.sbu_regfile (0)(23 downto 20) ;         -- conditional roll back
+        nx.sbu_regfile (0)(17 downto 12) := 
+      this.sbu_regfile (0)(17 downto 12) ; end if; -- conditional roll back
+          -- note : this roll back both rollbacks part 5 and part 6
+    -- pit_enable conditionall update (special) end
+  -- SBR1 : int request (partially writable)
+    nx.sbu_regfile(1)               :=
+      (  nx.sbu_regfile(1)             and x"00007000") or -- wt-able [14:12]
+      (this.sbu_regfile(1)             and x"ffff8fff");
+  -- SBR2 : pit throttle, full write,
+  -- SBR3 : pit cntr (no effect, done ==
+     -- by part 6)                    ==
+
+  -- --------------------------------------------------------------------------
+  -- SBR4 : cpu period in ns (read = fixed)
+    nx.sbu_regfile(4)               := std_logic_vector(to_unsigned(
+                                 c_busperiod, 32)); -- value set here, not pkg
+  -- SBR5 : cpu id (read = fixed)
+    nx.sbu_regfile(5)               := (others => '0');
+    if(cpuid = 1) then
+      nx.sbu_regfile(5)( 0       )  := '1'; end if; -- value set here, not pkg
+  -- SBR6 : cache control (partially writable)
+    nx.sbu_regfile(6)               := 
+      (  nx.sbu_regfile(6)             and x"0000003f") or
+      (this.sbu_regfile(6)             and x"ffffffc0");
+    if(cache_exist = 1) then
+      nx.sbu_regfile(6)(31       )  := '1'; end if;
+  -- SBR7 : wake up cpu1 (read = fixed) ==
+     -- (no effect, done by part 6      ==
+
+  -- --------------------------------------------------------------------------
+
+  -- part 8 receive cacheop information ---------------------------------------
+  --   from mm-mapped mode reg, other aic2 ------------------------------------
+
+  -- cache enable disale from mm-mapped &
+  -- cache invalidate from mm-mapped
+
+  -- initial value start
+      dcinv_1 := '0'; icinv_1 := '0';
+  -- initial value end
+  if(  db_cctrans_o.en = '1') and
+    (  db_cctrans_o.wr = '1') and
+    (((db_cctrans_o.a(5 downto 2) = x"0") and (cpuid = 0)) or
+     ((db_cctrans_o.a(5 downto 2) = x"1") and (cpuid = 1))) then
+    nx.sbu_regfile(6)(1 downto 0) :=
+       db_cctrans_o.d(1 downto 0);
+    if db_cctrans_o.d(9) = '1' then
+      dcinv_1 := '1'; end if;
+    if db_cctrans_o.d(8) = '1' then
+      icinv_1 := '1'; end if;
+  end if;
+
+  -- cache enable disale from other aic2's broadcast
+  if   (aic_com_i.ic_enable_ot  = '1') then nx.sbu_regfile(6)(0) := '1';
+  elsif(aic_com_i.ic_disable_ot = '1') then nx.sbu_regfile(6)(0) := '0';
+  end if;
+
+  if   (aic_com_i.dc_enable_ot  = '1') then nx.sbu_regfile(6)(1) := '1';
+  elsif(aic_com_i.dc_disable_ot = '1') then nx.sbu_regfile(6)(1) := '0';
+  end if;
+
+  -- cache enable disale from other aic2, and final gathering
+  --   gather -> ff -> output
+  nx.cbcdcinv := dcinv_0 or dcinv_1 or aic_com_i.dcinv;
+  nx.cbcicinv := icinv_0 or icinv_1 or aic_com_i.icinv;
+      
+  -- part 9 misc --------------------------------------------------------------
+  -- part 9.1 debug (small FSM) -----------------------------------------------
+  case this.db_state is
+  when db_init => 
+    if this.irq_bynum(82 - 64) = '1' then
+      nx.db_state := DB_INT;
+        nx.sbu_regfile(1)(3 downto 0) := std_logic_vector(unsigned(
+      this.sbu_regfile(1)(3 downto 0)) + 1); -- db_count
+--    nx.db_count := this.db_count + 1;
+    end if;
+  when others => -- when db_count
+    if this.irq_bynum(82 - 64) = '0' then
+      nx.db_state := DB_INIT;
+        nx.sbu_regfile(1)(3 downto 0) := std_logic_vector(unsigned(
+      this.sbu_regfile(1)(3 downto 0)) + 1); -- db_count
+--    nx.db_count := this.db_count + 1;
+    end if;
+  end case;
+
+  -- part 9.2 misc of misc ----------------------------------------------------
+  -- q_iqrs SBR1(23:16)
+  val_gsel := this.sbu_regfile(1)(14 downto 12); -- refered part 9, 10
+  -- read 2cycle in memory-map
+  --   (internally 2cycle gsel phase + db_o_d phase)
+  nx.sbu_regfile(1)(23 downto 16)
+            := this.irq_bynum((8 * vtoi(val_gsel) + 7) downto
+                              (8 * vtoi(val_gsel) + 0));
+
   -- count
-  if this.count_enable = '1' then nx.count := this.count - 1; end if;
+  val_count_enable := this.sbu_regfile(0)(25);
+  if val_count_enable = '1' then nx.sbu_regfile(0)(11 downto 0) := 
+                               this.sbu_regfile(0)(11 downto 0) - 1;
+  end if;
 
   -- pit_event (note "pit_event" is variable)
-  if(this.pit_cntr = this.pit_throttle) then pit_event := '1';
-  else                                       pit_event := '0'; end if;
+  --          counter               throttle
+  --          |                     |
+  if(this.sbu_regfile(3) = this.sbu_regfile(2)) then pit_event := '1';
+  else                                               pit_event := '0'; end if;
   -- pit counter etc.
-  if this.pit_enable = '1' then
-    if pit_event = '1' then nx.pit_cntr := (others => '0');
-                            nx.pit_flag := not this.pit_flag;
-    else                    nx.pit_cntr := this.pit_cntr + 1; end if;
-  else                      nx.pit_cntr := (others => '0');
+  val_pit_flag := this.sbu_regfile(1)(15);
+  if val_pit_enable = '1' then
+    if pit_event = '1' then
+                          nx.sbu_regfile(3) := (others => '0');
+                          nx.sbu_regfile(1)(15) := not val_pit_flag;
+--                        nx.pit_flag := not this.pit_flag;
+    else                  nx.sbu_regfile(3) := this.sbu_regfile(3) + 1; end if;
+  else                    nx.sbu_regfile(3) := (others => '0');
   end if;
 
   -- MISC events
@@ -327,7 +634,7 @@ begin
     end case;
   end if;
    
-  -- part 7 event ff update evaluation ----------------------------------------
+  -- part 10 event ff update evaluation ----------------------------------------
   -- irq_bynum
   -- irq_bynum set information accumulate for various source
   -- initial value -------------- -------
@@ -346,7 +653,14 @@ begin
   -- edge detection for old aic compatible
   irqsiedge_det := (this.irqsiedge0) and (not this.irqsiedge1);
                                                                -- 8bit and 8bit
-  if(irqsiedge_det(0) = '1') then tmp64b(IRQ_SI0_NUM - 64) := '1'; end if;
+  if(irqsiedge_det(0) = '1') or -- to be removed (dummy input remains)
+    (aic_com_i.ipi = '1')    or    -- aic2-aic2 comm (SBU instrction IPI)
+    ((  db_cctrans_o.en = '1') and -- through db_cctrans, cpu01 reverse con
+     (  db_cctrans_o.wr = '1') and
+     (  db_cctrans_o.d(28) = '1') and
+     (((db_cctrans_o.a(5 downto 2) = x"0") and (cpuid = 0)) or
+      ((db_cctrans_o.a(5 downto 2) = x"1") and (cpuid = 1)))) then
+                                  tmp64b(IRQ_SI0_NUM - 64) := '1'; end if;
   if(irqsiedge_det(1) = '1') then tmp64b(IRQ_SI1_NUM - 64) := '1'; end if;
   if(irqsiedge_det(2) = '1') then tmp64b(IRQ_SI2_NUM - 64) := '1'; end if;
   if(irqsiedge_det(3) = '1') then tmp64b(IRQ_SI3_NUM - 64) := '1'; end if;
@@ -355,11 +669,15 @@ begin
   if(irqsiedge_det(6) = '1') then tmp64b(IRQ_SI6_NUM - 64) := '1'; end if;
   if(irqsiedge_det(7) = '1') then tmp64b(IRQ_SI7_NUM - 64) := '1'; end if;
   -- edge detection end
-  if(this.count_enable = '1') and (this.count = x"000") then
+  if(val_count_enable = '1') and
+    (this.sbu_regfile(0)(11 downto 0) = x"000") then -- old code count = 000
+  -- +- set in part 9
                                   tmp64b(IRQ_II0_NUM  - 64) := '1'; end if;
+  val_pit_irqnumb := this.sbu_regfile(0)(23 downto 20);
+  val_pit_irqnuma := this.sbu_regfile(0)(17 downto 12);
   if(s_pit = '1') or (pit_event = '1') then
                                   tmp64b(vtoi(
-                      (this.pit_irqnumb & b"00") or this.pit_irqnuma )) := '1';
+                      (val_pit_irqnumb & b"00") or val_pit_irqnuma )) := '1';
   end if;
   -- accumulation finish, tmp64b is refered twice (main user is irq_bynum).
 
@@ -371,8 +689,11 @@ begin
   end if;
 
   -- aic + 0xc input and event register visible to software -------------------
-  nx.irqsample_i :=                tmp64b((8 * vtoi(this.gsel) + 7) downto
-                                          (8 * vtoi(this.gsel) + 0));
+  nx.sbu_regfile(1)(31 downto 24) := 
+                                   tmp64b((8 * vtoi(val_gsel) + 7) downto
+                                          (8 * vtoi(val_gsel) + 0));
+--nx.irqsample_i :=                tmp64b((8 * vtoi(this.gsel) + 7) downto
+--                                        (8 * vtoi(this.gsel) + 0));
 
   -- irq_s_i input
   nx.irqsiedge0 := irq_s_i;         -- input -> ff
@@ -391,9 +712,9 @@ begin
     end case;
   end if;
 
-  -- part 8. cpuid /= 0 logic removal for area reduction 
+  -- part 11. cpuid /= 0 logic removal for area reduction  --------------------
   --                                                   -- part (2/2) of removal
-  -- part 8.1 pre-process
+  -- part 11.1 pre-process
   id_non_zero_mask_bn                    := x"11111111" & x"11111101";
   id_non_zero_mask_bn(IRQ_II0_NUM  - 64) := '1';
   id_non_zero_mask_bn(IRQ_SI0_NUM  - 64) := '1';
@@ -406,7 +727,7 @@ begin
   if           IRQ_SI0_NUM < 72 then
        id_non_zero_mask_rr(2       downto  0           ) := b"111";
   else id_non_zero_mask_rr(tmpint2 downto (tmpint2 - 1)) := b"11"; end if;
-  -- part 8.2 main cutdown
+  -- part 11.2 main cutdown
   if(cpuid /= 0) then
     nx.reg_rtc_nsec   := (others => '0');
     nx.reg_rtc_sec    := (others => '0');
@@ -419,12 +740,29 @@ begin
   this := nx; -- all ff update
 
   end process;
- 
-  event_req  <= this'register.reg_event(14 downto 12);
-  event_info <= this'register.reg_event(11 downto  0);
-  -- output drive  -------------------
-  event_o    <= to_event_i(event_req, event_info); 
-  rtc_sec    <= this'register.reg_rtc_sec;
-  rtc_nsec   <= this'register.reg_rtc_nsec;
 
+  -- from here the context is outside of process statement --------
+  -- part 12. output ----------------------------------------------------------
+
+  -- pre output, these are still internal signal
+  event_req          <= this'register.reg_event(14 downto 12);
+  event_info         <= this'register.reg_event(11 downto  0);
+  -- output drive  -- (normal aic) ---------
+  event_o            <= to_event_i(event_req, event_info); 
+  rtc_sec            <= this'register.reg_rtc_sec;
+  rtc_nsec           <= this'register.reg_rtc_nsec;
+  -- output drive  -- (sbu: output to cpu) ----------------
+  cpy.ack            <= cpa.en;   -- return same cycle
+  cpy.d              <= this'register.sbu_regfile(9);
+  cpy.exc            <= '0';
+  cpy.t              <= '0';
+  -- output drive  -- (sbu: output to cache mode reg) ----------------
+  cacheb_ctrl_ic.en  <= this'register.sbu_regfile(6)(0);
+  cacheb_ctrl_dc.en  <= this'register.sbu_regfile(6)(1);
+  cacheb_ctrl_ic.inv <= this'register.cbcicinv ;
+  cacheb_ctrl_dc.inv <= this'register.cbcdcinv ;
+  -- note aic_com_o logic stage is small , it is set in part 6
+  -- output drive  -- (cpu1en) ---------------
+  cpu1eni            <= this'register.cpu1eni;
+  reboot             <= this'register.reboot;
 end behav;

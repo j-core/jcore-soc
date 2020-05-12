@@ -51,17 +51,18 @@ entity ddr_ram_mux is
     -- aggregated bus going to the ddr controller
     ddr_bus_o : out cpu_data_o_t;
     ddr_bus_i : in cpu_data_i_t;
-    ddr_burst : out std_logic);
+    ddr_burst : out std_logic;
+    ddr_bus_ack_r : in std_logic);
 
-  attribute sei_port_global_name of cpu0_ibus_o : signal is "cpu0_ddr_ibus_o";
-  attribute sei_port_global_name of cpu0_ibus_i : signal is "cpu0_ddr_ibus_i";
-  attribute sei_port_global_name of cpu0_dbus_o : signal is "cpu0_ddr_dbus_o";
-  attribute sei_port_global_name of cpu0_dbus_i : signal is "cpu0_ddr_dbus_i";
-  attribute sei_port_global_name of cpu1_ibus_o : signal is "cpu1_ddr_ibus_o";
-  attribute sei_port_global_name of cpu1_ibus_i : signal is "cpu1_ddr_ibus_i";
-  attribute sei_port_global_name of cpu1_dbus_o : signal is "cpu1_ddr_dbus_o";
-  attribute sei_port_global_name of cpu1_dbus_i : signal is "cpu1_ddr_dbus_i";
-  attribute sei_port_global_name of clk_ddr : signal is "clk_mem";
+  attribute soc_port_global_name of cpu0_ibus_o : signal is "cpu0_ddr_ibus_o";
+  attribute soc_port_global_name of cpu0_ibus_i : signal is "cpu0_ddr_ibus_i";
+  attribute soc_port_global_name of cpu0_dbus_o : signal is "cpu0_ddr_dbus_o";
+  attribute soc_port_global_name of cpu0_dbus_i : signal is "cpu0_ddr_dbus_i";
+  attribute soc_port_global_name of cpu1_ibus_o : signal is "cpu1_ddr_ibus_o";
+  attribute soc_port_global_name of cpu1_ibus_i : signal is "cpu1_ddr_ibus_i";
+  attribute soc_port_global_name of cpu1_dbus_o : signal is "cpu1_ddr_dbus_o";
+  attribute soc_port_global_name of cpu1_dbus_i : signal is "cpu1_ddr_dbus_i";
+  attribute soc_port_global_name of clk_ddr : signal is "clk_mem";
 -- synopsys translate_off
   group global_sigs : global_ports(
     dma_dbus_o,
@@ -74,6 +75,7 @@ entity ddr_ram_mux is
     ddr_bus_o,
     ddr_bus_i,
     ddr_burst,
+    ddr_bus_ack_r,
     cpu0_mem_lock,
     cpu1_mem_lock);
 -- synopsys translate_on

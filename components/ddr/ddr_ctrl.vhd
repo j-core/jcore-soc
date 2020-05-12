@@ -72,18 +72,20 @@ entity ddr_ctrl is
       reset_in      : in  std_logic;
       db_i          : in  cpu_data_o_t;
       db_o          : out cpu_data_i_t;
+      dbo_ack_r     : out std_logic;
       sd_data_o     : out sd_data_i_t;
       sd_data_i     : in  sd_data_o_t;
       sd_ctrl       : out sd_ctrl_t);
-  attribute sei_port_global_name of ddr_clk0 : signal is "clk_50_0";
-  attribute sei_port_global_name of ddr_clk90 : signal is "clk_50_90";
-  attribute sei_port_global_name of clk_2x : signal is "clk_sys2x";
-  attribute sei_port_global_name of reset_in : signal is "reset";
-  attribute sei_port_global_name of db_i : signal is "ddr_bus_o";
-  attribute sei_port_global_name of db_o : signal is "ddr_bus_i";
-  attribute sei_port_global_name of sd_data_o : signal is "ddr_sd_data_i";
-  attribute sei_port_global_name of sd_data_i : signal is "ddr_sd_data_o";
-  attribute sei_port_global_name of sd_ctrl : signal is "ddr_sd_ctrl";
+  attribute soc_port_global_name of ddr_clk0 : signal is "clk_mem";
+  attribute soc_port_global_name of ddr_clk90 : signal is "clk_mem_90";
+  attribute soc_port_global_name of clk_2x : signal is "clk_mem_2x";
+  attribute soc_port_global_name of reset_in : signal is "reset";
+  attribute soc_port_global_name of db_i : signal is "ddr_bus_o";
+  attribute soc_port_global_name of db_o : signal is "ddr_bus_i";
+  attribute soc_port_global_name of dbo_ack_r : signal is "ddr_bus_ack_r";
+  attribute soc_port_global_name of sd_data_o : signal is "ddr_sd_data_i";
+  attribute soc_port_global_name of sd_data_i : signal is "ddr_sd_data_o";
+  attribute soc_port_global_name of sd_ctrl : signal is "ddr_sd_ctrl";
 end; --entity ddr
 
 architecture logic of ddr_ctrl is
@@ -101,7 +103,8 @@ end component;
 	begin
 		-- Because this must follow the range of  tRAS and tREF, unless we add a counter for tRAS,
 		-- otherwise don't change this value;
-	       	return 70000/c_period_clkbus - 1;	-- 70 uS
+                -- change record tREFI x 1.0 value
+	       	return 7800/c_period_clkbus - 1;	-- 7.8 uS
 	end function f_get_refreshcnt_max;
 	function f_get_cyccnt_max return integer is 
 	begin
@@ -178,6 +181,7 @@ end component;
    signal bank_match : std_logic;
    signal db_i_int : cpu_data_o_t;
    signal db_o_int : cpu_data_i_t;
+   signal db_o_preo : cpu_data_i_t;
 
    --attribute maxskew : string;
    --attribute maxskew of write_active : signal is "350 ps";
@@ -189,10 +193,12 @@ begin
                         rst  => reset_in,
                         a    => db_i,
                         b    => db_o_int,
-                        ya   => db_o,
+                        ya   => db_o_preo,
                         yb   => db_i_int);
 
    byte_we <= db_i_int.we when db_i_int.wr = '1' else "0000";
+   db_o <= db_o_preo;
+   dbo_ack_r <= db_o_preo.ack;
 
    ddr_proc: process(ddr_clk0, ddr_clk90, clk_2x, reset_in, 
                      db_i_int.en, db_i_int.a, byte_we,
@@ -200,7 +206,7 @@ begin
                      byte_we_reg, data_reg, 
                      cycle_count, write_prev,
                      cke_reg, bank_open,
-                     data_read, write_reg, write_reg_90, 
+                     data_read, write_reg, write_reg_0, write_reg_90,
                      data_reg_lo, byte_we_reg_lo, sd_data_i)
    type address_array_type is array(3 downto 0) of std_logic_vector((c_sa_width -1) downto 0);
    variable address_row    : address_array_type;

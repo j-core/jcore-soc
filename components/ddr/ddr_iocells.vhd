@@ -20,11 +20,11 @@ entity ddr_iocells is
       sd_data_i  : in  sd_data_i_t;
       sd_data_o  : out sd_data_o_t;
       ckpo       : out std_logic);
-  attribute sei_port_global_name of ddr_clk0 : signal is "clk_50_0";
-  attribute sei_port_global_name of ddr_clk90 : signal is "clk_50_90";
-  attribute sei_port_global_name of sd_data_o : signal is "ddr_sd_data_o";
-  attribute sei_port_global_name of sd_data_i : signal is "ddr_sd_data_i";
-  attribute sei_port_global_name of ckpo : signal is "ddr_clk";
+  attribute soc_port_global_name of ddr_clk0 : signal is "clk_mem";
+  attribute soc_port_global_name of ddr_clk90 : signal is "clk_mem_90";
+  attribute soc_port_global_name of sd_data_o : signal is "ddr_sd_data_o";
+  attribute soc_port_global_name of sd_data_i : signal is "ddr_sd_data_i";
+  attribute soc_port_global_name of ckpo : signal is "ddr_clk";
   -- synopsys translate_off
   group sigs : global_ports(
     reset,

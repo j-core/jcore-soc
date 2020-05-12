@@ -1,7 +1,7 @@
 {"uartlite"
  {:entity "uartlitedb"
   :dt-name "serial"
-  :dt-props {:compatible "xlnx,xps-uartlite-1.00.a"
+  :dt-props {:compatible ["jcore,uartlite" "xlnx,xps-uartlite-1.00.a"]
              :device_type "serial"}
   :left-addr-bit 3
   :regs [{:name "rx"
@@ -17,10 +17,27 @@
           :width 1
           :addr 15}]
   :generics {"fclk" CFG_CLK_CPU_FREQ_HZ}}
+ "uart16550"
+ {:dt-name "serial"
+  :dt-props {:compatible "ns16550a"
+             :reg-shift (2)
+             :fifo-size (16)
+             :reg-io-width (4)
+             :device_type "serial"
+             :clock-frequency (18432000)}
+  :left-addr-bit 4
+  :regs [{:name "RTX"} ;; RBR/THR
+         {:name "IER"}
+         {:name "IIR"}
+         {:name "LCR"}
+         {:name "MCR"}
+         {:name "LSR"}
+         {:name "MSR"}
+         {:name "SCR"}]}
  "gpio"
  {:desc "General purpose IO"
   :entity "pio"
-  :dt-props {:compatible "jcore,soc-gpio-0.1"
+  :dt-props {:compatible "jcore,gpio1"
              :gpio-controller false
              :#gpio-cells (2)}
   :left-addr-bit 3
@@ -32,6 +49,7 @@
  "gpio2"
  {:desc "General purpose IO"
   :entity "gpio2"
+  :dt-props {:compatible "jcore,gpio2"}
   :left-addr-bit 3
   :regs [{:name "value"}
          {:name "in_out"}
@@ -39,35 +57,32 @@
           :mode :write}]}
  "spi"
  {:entity "spi2"
-  :dt-props {:compatible "jcore,soc-spi-0.1"
+  :dt-props {:compatible "jcore,spi2"
              :#address-cells (1)
-             :#size-cells (1)
+             :#size-cells (0)
              :status "ok"
-             :spi-max-frequency (12500000)}
+             :spi-max-frequency (25000000)
+             :clocks (:&bus_clock)
+             :clock-names "ref_clk"}
   ;; This lists the connected spi bus slaves, which may not be the same
   ;; across boards.
   ;; TODO: How should these be represented?
-  :dt-children [#_["spidev@2"
-                 {:properties
-                  {:compatible "rohm,dh2228fv"
-                   :reg (2)
-                   :mode (0)}}]
-                ["sdcard@1"
+  :dt-children [["sdcard@0"
                  {:properties
                   {:compatible "mmc-spi-slot"
-                   :reg (1)
-                   :spi-max-frequency (12500000)
+                   :reg (0)
+                   :spi-max-frequency (25000000)
                    :voltage-ranges (3200 3400)
                    :mode (0)}}]
-                #_["m25p80@1"
+                ["m25p80@1"
                  {:properties
-                  {:compatible "st,m25p80"
+                  {:compatible ["s25fl164k" "jedec,spi-nor"]
                    :#address-cells (1)
                    :#size-cells (1)
-                   :spi-max-frequency (1250000)
+                   :spi-max-frequency (25000000)
                    :reg (1)
                    :mode (0)
-                   :type "m25p32"}
+                   "m25p,fast-read" false}
                   :children
                   [["partition@0"
                     {:properties
@@ -81,9 +96,61 @@
          {:name "data"
           :width 1
           :addr 7}]
-  :generics {"clk_freq" CFG_CLK_CPU_FREQ_HZ}}
+  :generics {"clk_freq" CFG_CLK_CPU_FREQ_HZ}
+  :ports {"cpha" 0
+          "cpol" 0}}
+ "spi3"
+ {:entity "spi3"
+  :dt-name "spi"
+  :dt-props {:compatible ["jcore,spi3" "jcore,spi2"]
+             :#address-cells (1)
+             :#size-cells (0)
+             :status "ok"
+             :spi-max-frequency (25000000)
+             :clocks (:&bus_clock)
+             :clock-names "ref_clk"}
+  ;; This lists the connected spi bus slaves, which may not be the same
+  ;; across boards.
+  ;; TODO: How should these be represented?
+  :dt-children [["sdcard@0"
+                 {:properties
+                  {:compatible "mmc-spi-slot"
+                   :reg (0)
+                   :spi-max-frequency (25000000)
+                   :voltage-ranges (3200 3400)
+                   :mode (0)}}]
+                ["m25p80@1"
+                 {:properties
+                  {:compatible ["s25fl164k" "jedec,spi-nor"]
+                   :#address-cells (1)
+                   :#size-cells (1)
+                   :spi-max-frequency (25000000)
+                   :reg (1)
+                   :mode (0)
+                   "m25p,fast-read" false}
+                  :children
+                  [["partition@0"
+                    {:properties
+                     {:label "spi_flash"
+                      :reg (0 0) ;; size 0 means full mtd
+                      }}]]}]]
+  :left-addr-bit 5
+  :regs [{:name "ctrl"}
+         {:name "data"}
+         {:name "dma_cmnd"
+          :addr 0x10}
+         {:name "dma_stat"}
+         {:name "dma_ctrl"}
+         {:name "dma_data"}
+         {:name "dma_chan"
+          :addr 0x24}
+         {:name "crc_ctrl"}
+         {:name "crc_data"}]
+  :generics {"clk_freq" CFG_CLK_CPU_FREQ_HZ}
+  :ports {"actp_i" "dma_actpspi_i"
+          "actp_o" "dma_actp_o"}}
  "i2c"
- {:dt-props {:compatible "jcore,soc-i2c-0.1"}
+ {:dt-props {:compatible "jcore,i2c"}
   :left-addr-bit 4
   :regs [;; taken from misc/i2cb.vhd
          {:name "ctrl0"
@@ -110,8 +177,15 @@
  {:entity "eth_mac_rmii"
   :configuration "eth_mac_rmii_fpga"
   :dt-name "ethernet"
-  :dt-props {:compatible "jcore,soc-emac-0.1"}
+  :dt-props {:compatible "jcore,emac"}
   :left-addr-bit 12
+  :generics {"ASYNC_BUS_BRIDGE" false
+             "ASYNC_BRIDGE_IMPL2" false
+             "INSERT_WRITE_DELAY_ETHRX" true
+             "INSERT_READ_DELAY_ETHRX" true}
+  :ports {"clk_emac" 0
+          "rtc_sec_i" 0
+          "rtc_nsec_i" 0}
   :regs [;;-- assume block 0 is control;	(A12 = 0, (A11 = 0))
          {:name "trans_length"}
          {:name "status"}
@@ -146,7 +220,7 @@
  "cache_ctrl"
  {:entity "icache_modereg"
   :dt-name "cache-controller"
-  :dt-props {:compatible "jcore,soc-cache-0.1"
+  :dt-props {:compatible "jcore,cache"
              :cpu-offset (4)}
   :left-addr-bit 5
   :regs [{:name "ctrl0"}
@@ -156,10 +230,43 @@
          {:name "temp_cpu1_instr_addr"}
          {:name "sel_ctrl_temp"
           :addr 0x3c}]}
+ "cache_ctrl_wsbu"
+ {:entity "icache_modereg_wsbu"
+  :dt-name "cache-controller"
+  :dt-props {:compatible "jcore,cache"
+             :cpu-offset (4)}
+  :left-addr-bit 5
+  :ports {"db_cctrans_o" "db_cctrans_o"}
+  :regs [{:name "ctrl0"}
+         {:name "ctrl1"}
+         {:name "temp_cpu0_instr_addr"
+          :addr 0x30}
+         {:name "temp_cpu1_instr_addr"}
+         {:name "sel_ctrl_temp"
+          :addr 0x3c}]}
+ "dma"
+ {:entity "dma_db"
+  :configuration "dma_db_inferred"
+  :dt-props {:compatible "jcore,dmac"}
+  :left-addr-bit 10
+  ;; registers of DMAC are big and complicated
+  ;;:regs []
+  :generics {"DMA_NUMCH" CFG_DMA_NUMCH
+             "DMA_ASYNC" false
+             "DMA_GRPT" false}
+  }
+ "dsp"
+ {:entity "dsp_adapter"
+  :configuration "dsp_adapter_fpga"
+  :left-addr-bit 17
+  :generics {"X_MEM_ADDR_WIDTH" 13
+             "Y_MEM_ADDR_WIDTH" 13
+             "P_MEM_ADDR_WIDTH" 11}
+  }
  "aic"
  {:entity "aic"
   :dt-name "interrupt-controller"
-  :dt-props {:compatible "jcore,j2-soc-aic-0.1"
+  :dt-props {:compatible "jcore,aic1"
              :interrupt-controller false
              :#interrupt-cells (1)}
   :left-addr-bit 5
@@ -181,7 +288,7 @@
  "aic2"
  {:entity "aic2"
   :dt-name "interrupt-controller"
-  :dt-props {:compatible "jcore,j2-soc-aic-0.2"
+  :dt-props {:compatible "jcore,aic2"
              :interrupt-controller false
              :#interrupt-cells (1)}
   :left-addr-bit 5
@@ -207,4 +314,34 @@
           "rst_i" "reset"
           "irqs" {:irq? true}
           "irq_o" {:irq? true}}}
+ "fpga_ctrl"
+ {:left-addr-bit 1}
+ "dsm_recv"
+ {:entity "dsm_recvb"
+  :ports {"clk" "clk_sys"
+          "clk_bitlink" "clk_bitlink" 
+          "rst" "reset"
+          "db_i" "db_dmadsm_o"
+          "db_o" "db_dmadsm_i"
+          "dsm0" "bitlink0_dsm_o"
+          "dsm1" "bitlink1_dsm_o"
+          "dds_time" "curr_time"
+          "dma_req" "dsm_dmareq"
+          "dma_return" "dma_actp_o"
+          "ctrl" "dsmrec_ctrl"
+          "gps_tsdt" "gps_tsdt"
+          "slot_inf" "dsm_realign_slot_inf"}}
+ "dma_preq_arb"
+ {:entity "dma_preq_arb"
+  :ports {"clk" "clk_sys"
+          "rst" "reset"}}
+ "misc_gps_rfcap"
+ {:entity "misc_gps_rfcap"
+  :ports {"clk" "clk_sys"
+          "blgps" "dsm_recv_blgps"
+          "gps_ck" "gps_clk"
+          "gps_dt" "gps_d"
+          "opmode_en" "bitreq_ctrl"
+          "brg_bypass" "brg0_premx_gpc"
+          "brg" "brg0_o"}}
  }

@@ -1,0 +1,39 @@
+BEGIN {
+  state = 0;
+}
+{
+  if     ($0 ~ / gps_pps/) {
+    state = 999;
+    memo = "this_input_file_is_processed_ph2_once_so_no_cook_any_more";
+    print $0;
+  }
+  else if(state == 999) {
+    print $0;
+  }
+  else {
+    if     (($0 ~ / signal jtag/) && (state == 0)) {
+      state = 1;
+      print "    signal gps_pps : std_logic;";
+      print $0;
+    }
+    else if($0 ~ /soc : entity/) {
+      state = 2;
+      print $0;
+    }
+    else if(($0 ~ / jtag/) && (state == 2)) {
+      state = 3;
+      print "            gps_pps => gps_pps,";
+      print $0;
+    }
+    else if($0 ~ /O => pi.9/) {
+      state = 4;
+      print $0;
+    }
+    else if(($0 ~ /;/) && (state == 4)) {
+      state = 5;
+      print $0;
+      print "    gps_pps <= pi(9);";
+    }
+    else { print $0; }
+  }
+}

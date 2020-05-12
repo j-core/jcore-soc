@@ -17,6 +17,7 @@ use work.ddrc_cnt_pack.all;
 use work.dma_pack.all;
 entity soc is
     port (
+        clk10 : in std_logic;
         clk_sys : in std_logic;
         clk_sys_2x : in std_logic;
         clk_sys_90 : in std_logic;
@@ -58,16 +59,26 @@ architecture impl of soc is
     signal dcache0_ctrl : cache_ctrl_t;
     signal dcache1_ctrl : cache_ctrl_t;
     signal ddr_burst : std_logic;
+    signal ddr_bus_ack_r : std_logic;
     signal ddr_bus_i : cpu_data_i_t;
     signal ddr_bus_o : cpu_data_o_t;
+    signal ddr_status : ddr_status_o_t;
     signal debug_i : cpu_debug_i_t;
     signal dma_dbus_o : bus_ddr_o_t;
     signal icache0_ctrl : cache_ctrl_t;
     signal icache1_ctrl : cache_ctrl_t;
+    signal reboot : std_logic;
 begin
-    cpus : configuration work.one_cpu_fpga
+    cpus : configuration work.one_cpu_decode_rom_fpga
+        generic map (
+            insert_inst_delay_boot_mem => FALSE,
+            insert_read_delay_boot_mem => FALSE,
+            insert_write_delay_boot_mem => FALSE
+        )
         port map (
             clk => clk_sys,
+            cpu0_copro_i => NULL_COPR_I,
+            cpu0_copro_o => open,
             cpu0_data_master_ack => cpu0_data_master_ack,
             cpu0_data_master_en => cpu0_data_master_en,
             cpu0_ddr_dbus_i => cpu0_ddr_dbus_i,
@@ -79,6 +90,8 @@ begin
             cpu0_mem_lock => cpu0_mem_lock,
             cpu0_periph_dbus_i => cpu0_periph_dbus_i,
             cpu0_periph_dbus_o => cpu0_periph_dbus_o,
+            cpu1_copro_i => NULL_COPR_I,
+            cpu1_copro_o => open,
             cpu1_data_master_ack => open,
             cpu1_data_master_en => open,
             cpu1_ddr_dbus_i => cpu1_ddr_dbus_i,
@@ -90,13 +103,14 @@ begin
             cpu1_mem_lock => cpu1_mem_lock,
             cpu1_periph_dbus_i => cpu1_periph_dbus_i,
             cpu1_periph_dbus_o => cpu1_periph_dbus_o,
+            cpu1eni => '0',
             debug_i => debug_i,
             debug_o => open,
             rst => reset
         );
     ddr_ctrl : entity work.ddr_fsm(logic)
         generic map (
-            read_sample_tm => CFG_DDR_READ_SAMPLE_TM
+            read_sample_tm => freq_to_read_sample_tm(CFG_CLK_MEM_FREQ_HZ)
         )
         port map (
             bst => ddr_burst,
@@ -107,7 +121,9 @@ begin
             fix_pinhi => '0',
             fix_pinlo => '0',
             i => ddr_bus_o,
+            o_ack_r => ddr_bus_ack_r,
             o_d => ddr_bus_i,
+            o_st => ddr_status,
             reset_in => reset,
             s_c => ddr_sd_pre_ctrl,
             s_i => ddr_sd_data_o,
@@ -131,12 +147,22 @@ begin
             dcache0_ctrl => dcache0_ctrl,
             dcache1_ctrl => dcache1_ctrl,
             ddr_burst => ddr_burst,
+            ddr_bus_ack_r => ddr_bus_ack_r,
             ddr_bus_i => ddr_bus_i,
             ddr_bus_o => ddr_bus_o,
             dma_dbus_i => open,
             dma_dbus_o => dma_dbus_o,
             icache0_ctrl => icache0_ctrl,
             icache1_ctrl => icache1_ctrl,
+            rst => reset
+        );
+    fpga_reboot : entity work.fpga_reboot(s6)
+        generic map (
+            resync_en => TRUE
+        )
+        port map (
+            clk => clk10,
+            en => reboot,
             rst => reset
         );
     devices : entity work.devices(impl)
@@ -155,6 +181,7 @@ begin
             cpu1_periph_dbus_o => cpu1_periph_dbus_o,
             dcache0_ctrl => dcache0_ctrl,
             dcache1_ctrl => dcache1_ctrl,
+            ddr_status => ddr_status,
             flash_clk => flash_clk,
             flash_cs => flash_cs,
             flash_miso => flash_miso,
@@ -163,6 +190,7 @@ begin
             icache1_ctrl => icache1_ctrl,
             pi => pi,
             po => po,
+            reboot => reboot,
             reset => reset,
             uart0_rx => uart0_rx,
             uart0_tx => uart0_tx
@@ -170,5 +198,5 @@ begin
     -- Zero out unused signals
     cpu1_event_i <= (en => '0', cmd => INTERRUPT, vec => (others => '0'), msk => '0', lvl => (others => '0'));
     debug_i <= (en => '0', cmd => BREAK, ir => (others => '0'), d => (others => '0'), d_en => '0');
-    dma_dbus_o <= (en => '0', a => (others => '0'), d => (others => '0'), wr => '0', we => (others => '0'), burst32 => '0', burst16 => '0');
+    dma_dbus_o <= (en => '0', a => (others => '0'), d => (others => '0'), wr => '0', we => (others => '0'), burst32 => '0', burst16 => '0', bgrp => '0');
 end;

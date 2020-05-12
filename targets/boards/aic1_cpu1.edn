@@ -3,7 +3,8 @@
  :cpu 1
  :dt-node false
  :base-addr 0xabcd0500
- :generics {"c_busperiod" CFG_CLK_CPU_PERIOD_NS}
+ :generics {"c_busperiod" CFG_CLK_CPU_PERIOD_NS
+            "rtc_sec_length34b" false}
  :ports {"bstb_i" "cpu1_data_master_en"
          "back_i" "cpu1_data_master_ack"
          "enmi_i" 1

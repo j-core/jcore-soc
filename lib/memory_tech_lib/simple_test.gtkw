@@ -1,0 +1,53 @@
+[*]
+[*] GTKWave Analyzer v3.3.58 (w)1999-2014 BSI
+[*] Fri Mar 20 21:08:52 2015
+[*]
+[dumpfile] "/home/geoff/projects/se-instruments/workspace/soc_top/lib/memory_tech_lib/simple_test.ghw"
+[dumpfile_mtime] "Fri Mar 20 21:08:15 2015"
+[dumpfile_size] 2004
+[savefile] "/home/geoff/projects/se-instruments/workspace/soc_top/lib/memory_tech_lib/simple_test.gtkw"
+[timestart] 0
+[size] 1920 1031
+[pos] -1 -1
+*-24.830366 17600000 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[treeopen] top.
+[treeopen] top.simple_test.
+[treeopen] top.simple_test.u_ram_2x8x2048_2rw.
+[sst_width] 201
+[signals_width] 126
+[sst_expanded] 1
+[sst_vpaned_height] 307
+@28
+top.simple_test.rst
+top.simple_test.clk
+@200
+-
+@28
+top.simple_test.u_ram_2x8x2048_2rw.rst0
+top.simple_test.u_ram_2x8x2048_2rw.clk0
+top.simple_test.u_ram_2x8x2048_2rw.en0
+top.simple_test.u_ram_2x8x2048_2rw.wr0
+#{top.simple_test.u_ram_2x8x2048_2rw.wr_we0[1:0]} top.simple_test.u_ram_2x8x2048_2rw.wr_we0[1] top.simple_test.u_ram_2x8x2048_2rw.wr_we0[0]
+@22
+#{top.simple_test.u_ram_2x8x2048_2rw.a0[10:0]} top.simple_test.u_ram_2x8x2048_2rw.a0[10] top.simple_test.u_ram_2x8x2048_2rw.a0[9] top.simple_test.u_ram_2x8x2048_2rw.a0[8] top.simple_test.u_ram_2x8x2048_2rw.a0[7] top.simple_test.u_ram_2x8x2048_2rw.a0[6] top.simple_test.u_ram_2x8x2048_2rw.a0[5] top.simple_test.u_ram_2x8x2048_2rw.a0[4] top.simple_test.u_ram_2x8x2048_2rw.a0[3] top.simple_test.u_ram_2x8x2048_2rw.a0[2] top.simple_test.u_ram_2x8x2048_2rw.a0[1] top.simple_test.u_ram_2x8x2048_2rw.a0[0]
+#{top.simple_test.u_ram_2x8x2048_2rw.dw0[15:0]} top.simple_test.u_ram_2x8x2048_2rw.dw0[15] top.simple_test.u_ram_2x8x2048_2rw.dw0[14] top.simple_test.u_ram_2x8x2048_2rw.dw0[13] top.simple_test.u_ram_2x8x2048_2rw.dw0[12] top.simple_test.u_ram_2x8x2048_2rw.dw0[11] top.simple_test.u_ram_2x8x2048_2rw.dw0[10] top.simple_test.u_ram_2x8x2048_2rw.dw0[9] top.simple_test.u_ram_2x8x2048_2rw.dw0[8] top.simple_test.u_ram_2x8x2048_2rw.dw0[7] top.simple_test.u_ram_2x8x2048_2rw.dw0[6] top.simple_test.u_ram_2x8x2048_2rw.dw0[5] top.simple_test.u_ram_2x8x2048_2rw.dw0[4] top.simple_test.u_ram_2x8x2048_2rw.dw0[3] top.simple_test.u_ram_2x8x2048_2rw.dw0[2] top.simple_test.u_ram_2x8x2048_2rw.dw0[1] top.simple_test.u_ram_2x8x2048_2rw.dw0[0]
+@200
+-
+@28
+top.simple_test.u_ram_2x8x2048_2rw.rst1
+top.simple_test.u_ram_2x8x2048_2rw.clk1
+top.simple_test.u_ram_2x8x2048_2rw.en1
+top.simple_test.u_ram_2x8x2048_2rw.wr1
+#{top.simple_test.u_ram_2x8x2048_2rw.wr_we1[1:0]} top.simple_test.u_ram_2x8x2048_2rw.wr_we1[1] top.simple_test.u_ram_2x8x2048_2rw.wr_we1[0]
+@22
+#{top.simple_test.u_ram_2x8x2048_2rw.a1[10:0]} top.simple_test.u_ram_2x8x2048_2rw.a1[10] top.simple_test.u_ram_2x8x2048_2rw.a1[9] top.simple_test.u_ram_2x8x2048_2rw.a1[8] top.simple_test.u_ram_2x8x2048_2rw.a1[7] top.simple_test.u_ram_2x8x2048_2rw.a1[6] top.simple_test.u_ram_2x8x2048_2rw.a1[5] top.simple_test.u_ram_2x8x2048_2rw.a1[4] top.simple_test.u_ram_2x8x2048_2rw.a1[3] top.simple_test.u_ram_2x8x2048_2rw.a1[2] top.simple_test.u_ram_2x8x2048_2rw.a1[1] top.simple_test.u_ram_2x8x2048_2rw.a1[0]
+#{top.simple_test.u_ram_2x8x2048_2rw.dw1[15:0]} top.simple_test.u_ram_2x8x2048_2rw.dw1[15] top.simple_test.u_ram_2x8x2048_2rw.dw1[14] top.simple_test.u_ram_2x8x2048_2rw.dw1[13] top.simple_test.u_ram_2x8x2048_2rw.dw1[12] top.simple_test.u_ram_2x8x2048_2rw.dw1[11] top.simple_test.u_ram_2x8x2048_2rw.dw1[10] top.simple_test.u_ram_2x8x2048_2rw.dw1[9] top.simple_test.u_ram_2x8x2048_2rw.dw1[8] top.simple_test.u_ram_2x8x2048_2rw.dw1[7] top.simple_test.u_ram_2x8x2048_2rw.dw1[6] top.simple_test.u_ram_2x8x2048_2rw.dw1[5] top.simple_test.u_ram_2x8x2048_2rw.dw1[4] top.simple_test.u_ram_2x8x2048_2rw.dw1[3] top.simple_test.u_ram_2x8x2048_2rw.dw1[2] top.simple_test.u_ram_2x8x2048_2rw.dw1[1] top.simple_test.u_ram_2x8x2048_2rw.dw1[0]
+@200
+-
+-
+@22
+#{top.simple_test.u_ram_2x8x2048_2rw.dr0[15:0]} top.simple_test.u_ram_2x8x2048_2rw.dr0[15] top.simple_test.u_ram_2x8x2048_2rw.dr0[14] top.simple_test.u_ram_2x8x2048_2rw.dr0[13] top.simple_test.u_ram_2x8x2048_2rw.dr0[12] top.simple_test.u_ram_2x8x2048_2rw.dr0[11] top.simple_test.u_ram_2x8x2048_2rw.dr0[10] top.simple_test.u_ram_2x8x2048_2rw.dr0[9] top.simple_test.u_ram_2x8x2048_2rw.dr0[8] top.simple_test.u_ram_2x8x2048_2rw.dr0[7] top.simple_test.u_ram_2x8x2048_2rw.dr0[6] top.simple_test.u_ram_2x8x2048_2rw.dr0[5] top.simple_test.u_ram_2x8x2048_2rw.dr0[4] top.simple_test.u_ram_2x8x2048_2rw.dr0[3] top.simple_test.u_ram_2x8x2048_2rw.dr0[2] top.simple_test.u_ram_2x8x2048_2rw.dr0[1] top.simple_test.u_ram_2x8x2048_2rw.dr0[0]
+@23
+#{top.simple_test.u_ram_2x8x2048_2rw.dr1[15:0]} top.simple_test.u_ram_2x8x2048_2rw.dr1[15] top.simple_test.u_ram_2x8x2048_2rw.dr1[14] top.simple_test.u_ram_2x8x2048_2rw.dr1[13] top.simple_test.u_ram_2x8x2048_2rw.dr1[12] top.simple_test.u_ram_2x8x2048_2rw.dr1[11] top.simple_test.u_ram_2x8x2048_2rw.dr1[10] top.simple_test.u_ram_2x8x2048_2rw.dr1[9] top.simple_test.u_ram_2x8x2048_2rw.dr1[8] top.simple_test.u_ram_2x8x2048_2rw.dr1[7] top.simple_test.u_ram_2x8x2048_2rw.dr1[6] top.simple_test.u_ram_2x8x2048_2rw.dr1[5] top.simple_test.u_ram_2x8x2048_2rw.dr1[4] top.simple_test.u_ram_2x8x2048_2rw.dr1[3] top.simple_test.u_ram_2x8x2048_2rw.dr1[2] top.simple_test.u_ram_2x8x2048_2rw.dr1[1] top.simple_test.u_ram_2x8x2048_2rw.dr1[0]
+[pattern_trace] 1
+[pattern_trace] 0

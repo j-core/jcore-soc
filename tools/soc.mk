@@ -22,6 +22,11 @@ define \n
 endef
 # .VARIABLES contains all variables. Filter it to just the CONFIG_* variables.
 CONF_VARS:=$(sort $(filter CONFIG_%,$(.VARIABLES)))
+# Remove variables that don't belong in config.h or config.vhd. These
+# are usually config variables intended for the bootloader build.
+# TODO: Distinguish in a better way? Different prefixes?
+CONF_VARS:=$(filter-out CONFIG_BOOT_ID,$(CONF_VARS))
+
 # Create a variable containing a #define line for each var with its value
 CONF_HEADER:=$(foreach v,$(CONF_VARS),\#define $v ${$v}${\n})
 # export the variable so the shell can access it. See $$ below.
@@ -122,6 +127,30 @@ soc_regen:
 	@echo "Running soc_gen.jar"
 	(cd $(TOP_DIR)/targets/soc_gen; java -jar ../../soc_gen.jar -r $(BOARD_NAME))
 	@echo "Done"
+
+endif
+
+################################################################################
+# Build device tree dtb
+################################################################################
+
+DTC := dtc
+DTC_EXISTS := $(shell sh -c 'which $(DTC) >/dev/null && echo true')
+
+ifeq ($(DTC_EXISTS),true)
+
+dt.dtb: $(BOARD_DIR)/board.dts
+	$(DTC) -O dtb -o $@ -I dts $<
+
+dt.S: $(BOARD_DIR)/board.dts
+	$(DTC) -O asm -o $@.tmp -I dts $<
+	cat $(TOP_DIR)/tools/dt_header.S $@.tmp > $@
+
+else
+
+dt.dtb dt.S:
+	@echo "ERROR: dtc utility not detected. Cannot build $@."
+	false
 
 endif
 

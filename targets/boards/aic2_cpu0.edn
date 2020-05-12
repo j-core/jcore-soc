@@ -2,12 +2,20 @@
  :name "aic0"
  :cpu 0
  :dt-label "aic"
- :dt-props {:cpu-offset {:fmt :hex :v (0x300)}}
  :base-addr 0xabcd0200
  :generics {"c_busperiod" CFG_CLK_CPU_PERIOD_NS
             "cpuid" 0}
  :ports {"rtc_sec" "rtc_sec"
          "rtc_nsec" "rtc_nsec"
          "enmi_i" {:value 1}
+         "cpy" "cpu0_copro_i"
+         "cpa" "cpu0_copro_o"
+         "db_cctrans_o" "db_cctrans_o"
+         "cacheb_ctrl_ic" "icache0_ctrl"
+         "cacheb_ctrl_dc" "dcache0_ctrl"
+         "aic_com_i" "aic_com_10"
+         "aic_com_o" "aic_com_01"
+         "cpu1eni" "cpu1eni"
          "event_i" "cpu0_event_o"
-         "event_o" "cpu0_event_i"}}
+         "event_o" "cpu0_event_i"
+         "reboot" "reboot"}}

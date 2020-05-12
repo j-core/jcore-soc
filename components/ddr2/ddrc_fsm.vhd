@@ -17,6 +17,8 @@ entity ddr_fsm is
          i         : in  cpu_data_o_t;
          bst       : in  std_logic;
          o_d       : out cpu_data_i_t;
+         o_ack_r   : out std_logic;
+         o_st      : out ddr_status_o_t;
          fix_pinhi : in  std_logic;
          fix_pinlo : in  std_logic;
          s_i       : in  sd_data_o_t;
@@ -25,18 +27,21 @@ entity ddr_fsm is
          eack      : out std_logic
     );
 
-  attribute sei_port_global_name of reset_in : signal is "reset";
-  attribute sei_port_global_name of s_o : signal is "ddr_sd_data_i";
-  attribute sei_port_global_name of s_i : signal is "ddr_sd_data_o";
-  attribute sei_port_global_name of s_c : signal is "ddr_sd_pre_ctrl";
-  attribute sei_port_global_name of i : signal is "ddr_bus_o";
-  attribute sei_port_global_name of o_d : signal is "ddr_bus_i";
-  attribute sei_port_global_name of bst : signal is "ddr_burst";
+  attribute soc_port_global_name of reset_in : signal is "reset";
+  attribute soc_port_global_name of s_o : signal is "ddr_sd_data_i";
+  attribute soc_port_global_name of s_i : signal is "ddr_sd_data_o";
+  attribute soc_port_global_name of s_c : signal is "ddr_sd_pre_ctrl";
+  attribute soc_port_global_name of i : signal is "ddr_bus_o";
+  attribute soc_port_global_name of o_d : signal is "ddr_bus_i";
+  attribute soc_port_global_name of o_ack_r : signal is "ddr_bus_ack_r";
+  attribute soc_port_global_name of o_st : signal is "ddr_status";
+  attribute soc_port_global_name of bst : signal is "ddr_burst";
 end;
 
 architecture logic of ddr_fsm is
    signal this_c : fsm_reg_t ;
    signal this_r : fsm_reg_t ;
+   signal o_d_dhalf : std_logic_vector(31 downto 0);
 
 -- signals to observer wave viewer (gtk) ---
    signal cycle_count  : integer range 0 to 100000 ; 
@@ -69,9 +74,12 @@ architecture logic of ddr_fsm is
    -- future input signal
    signal md2kc_opt     : std_logic := '0';
                    -- mode to optimize performance for 2k column (2Gb mem chip)
+   signal md_twtr2cyc   : std_logic := '0'; -- value1:2 cycle, value0:1 cycle
+   signal md_halfcyc_readd  : std_logic := '0';
+                   -- value1:receive neg-edge ff, value0: skip neg-ff
 
 begin
-  ddr_trans: process (this_r, reset_in, i, s_i, clk, bst, clk_90, cycle_count, clk_2x, fix_pinhi, fix_pinlo, md2kc_opt )
+  ddr_trans: process (this_r, reset_in, i, s_i, clk, bst, clk_90, cycle_count, clk_2x, fix_pinhi, fix_pinlo, md2kc_opt, md_twtr2cyc, md_halfcyc_readd)
 
    variable nxt : fsm_reg_t ;
 
@@ -160,7 +168,7 @@ begin
      nxt.row_a     :=       i.a(27 downto 13);
    else
      nxt.clm_a(11) := i.a(13);
-     nxt.row_a     := '0' & i.a(27 downto 14);
+     nxt.row_a     := '0' & i.a(26 downto 14) & i.a(27);
    end if;
 
    -- bank check ----
@@ -241,7 +249,8 @@ begin
             wait_cnt := tMRD ;
 
          when st_LMR =>
-            c_io := i.a(6 downto 4) ;
+--          c_io := i.a(6 downto 4) ;
+            c_io := this_r.clm_a(5 downto 3) ;
             nxt.state := st_LMR2;
 
          when st_LMR2 =>
@@ -251,7 +260,11 @@ begin
 
          when st_idle =>
             if c70='1' and c14 = '1' and ncnt ='1' then
+              if this_r.v = V_BNK_A_INIT then
                nxt.state := st_REFRESH ;
+              else
+               nxt.state := st_PRECHG ;
+              end if;
             elsif c70='0' and c14 = '1' and ncnt ='1' and in_en = '1' then
                nxt.state := st_ACT ;
             else
@@ -369,9 +382,25 @@ begin
                end if;
             elsif bnkmis='0' and rd_en ='1' and c70='0' then
                nxt.state := st_wr_wait ;
+               if md_twtr2cyc = '1' then
+                   wait_cnt := 1 ;
+                   cmncs := '1' ;
+               end if;
             elsif (bnkmis='1' and in_en='1') or c70 ='1' then
                nxt.state := st_PRECHG ;
             elsif in_en='0' then
+              if md_twtr2cyc = '1' then
+                   nxt.state := st_WRITEE2 ;
+              else nxt.state := st_RCD_wait ; end if;
+            end if;
+
+         when st_WRITEE2 => -- effect of tWTR=2cycle
+            if c70='1' or (  c14='1' and bnkmis='1' and in_en = '1' ) then
+               nxt.state := st_PRECHG ;
+            elsif c70='0' and ncnt='1' and bnkmis='0' and wr_en = '1' then
+               nxt.state := st_WRITES;
+               wack := '1' ;
+            else
                nxt.state := st_RCD_wait ;
             end if;
 
@@ -406,13 +435,32 @@ begin
                if (ncnt='0') or ( c14 = '0') then 
                   c_io := cmd_idle ;
                   nxt.state := st_REFRESH ;
-               else 
+               elsif (this_r.strd_intvl = "00") then  -- read status (1 by 4)
+                  c_io := cmd_LMR ;
+                  cmncs := '1' ;
+                  wait_cnt := 9 ;
+                  nxt.state := st_REFRESH2;
+               else
                   c_io := cmd_AUTORF ;
                   nxt.state := st_idle ;
                   c70s := '1' ;
                   cmncs := '1' ;
                   wait_cnt := tRFC ;
                end if ;
+
+         when st_REFRESH2 =>
+               case this_r.cmnc is
+               when 9 => c70s := '1' ;
+               when 6 => c_io := cmd_READ ;
+               when 1 => c_io := cmd_AUTORF ;
+               when 0 => cmncs := '1' ;
+                         wait_cnt := tRFC - 2;
+               when others => -- no action
+               end case;
+
+               if (this_r.cmnc = 0) then
+                    nxt.state := st_idle;
+               else nxt.state := st_REFRESH2; end if;
 
          when others =>
             nxt.state := st_idle;
@@ -423,7 +471,10 @@ begin
 --      if c70s = '1' and xreset_in ='1' then nxt.c70c := C70_MAX ;
 --      elsif c70s = '1' and xreset_in  = '0' then nxt.c70c := C70_MAX2 ;
 --      end if;
-      if c70s = '1' then nxt.c70c := C70_MAX ;
+      if (c70s = '1') then
+        if (this_r.status_ddrm(4 downto 0) = REFRE_MULT_QUAT) then
+                           nxt.c70c := C70_MAX_DIV4 ;    -- 0.25 X tREFI
+        else               nxt.c70c := C70_MAX ; end if; -- 1    X tREFI
       end if;
 
       if nxt.c70c = 0 then nxt.c70c_zero := '1';
@@ -473,6 +524,20 @@ begin
                       else nxt.we := "0000" ;
      end if ;
 
+     if(this_r.state = st_REFRESH2) then
+       if ((this_r.cmnc = 0) and ( READ_SAMPLE_TM >  6 )) or
+          ((this_r.cmnc = 1) and ( READ_SAMPLE_TM <= 6 )) then
+         if(md_halfcyc_readd = '1') then
+              nxt.status_ddrm := o_d_dhalf  (15 downto 8);
+         else nxt.status_ddrm := s_i.dqo_lat(15 downto 8); end if;
+       else   nxt.status_ddrm := this_r.status_ddrm; end if;
+     else     nxt.status_ddrm := this_r.status_ddrm;
+     end if;
+
+     if(this_r.c70c = 2) then
+          nxt.strd_intvl := std_logic_vector(unsigned
+                            (this_r.strd_intvl) + 1) ;
+     else nxt.strd_intvl :=  this_r.strd_intvl;       end if;
 
 --- fifth : from ddr data ----
      if(reset_in = '1' ) then dmy_cke := '0' ;
@@ -493,8 +558,14 @@ begin
        s_c            <= SD_CTRL_FIXLO;
        s_o_pre        := SD_DATA_FIXLO;
      else
-       s_c.a          <= padr ; -- s_c seven members
-       s_c.ba         <= itov(this_r.b_id ,2);
+       -- s_c seven members (a ba cke cs ras cas we)
+       if((this_r.state = st_REFRESH) and
+          (ncnt='1') and (c14 = '1')) then  -- read status register
+            s_c.a     <= (others => '0');
+            s_c.ba    <= b"01";
+       else s_c.a     <= padr ;
+            s_c.ba    <= itov(this_r.b_id, 2); end if;
+       --
        s_c.cke        <= dmy_cke ;
        s_c.cs         <= not dmy_cke ;
        s_c.ras        <= c_io(2) ;
@@ -516,11 +587,14 @@ begin
      s_o.dm_latp    <= this_r.we_d(3 downto 2);
      s_o.dm_latn    <= this_r.we_d(1 downto 0);
      
-     o_d.d <= s_i.dqo_lat(31 downto 0)  ;    --  change for syn
+
      if(READ_SAMPLE_TM <= 6) then
           o_d.ack <= this_r.rack_ddd  or wack;
      else o_d.ack <= this_r.rack_dddd or wack; end if;
-     --                             * (one more character)
+     --                                 * (one more character)
+     if(READ_SAMPLE_TM <= 6) then
+          o_ack_r   <= this_r.rack_ddd;
+     else o_ack_r   <= this_r.rack_dddd; end if;
      eack <= this_r.eack_d ;
 
 -- for debug only for gtk ---
@@ -571,6 +645,10 @@ begin
 
    end process; --ddr_trans
 
+   o_d.d <= o_d_dhalf                when md_halfcyc_readd = '1' else
+            s_i.dqo_lat(31 downto 0);
+   o_st.status0 <= this_r.status_ddrm;
+
    ddr_trans_r0 : process(clk, reset_in)
    begin
       if clk = '1' and clk'event then
@@ -582,5 +660,11 @@ begin
       end if;
    end process;
 
+   ddr_negedge_r0: process(clk)
+   begin
+     if clk = '0' and clk'event then
+       o_d_dhalf <= s_i.dqo_lat(31 downto 0);
+     end if;
+   end process;
 
 end; --architecture logic

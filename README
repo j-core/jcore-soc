@@ -68,9 +68,10 @@ Building
 --------
 
 The top-level Makefile has targets for each module/mother board
-combination. To build a bitstream for the Numato Mimas v2 board, run:
+combination. To build a bitstream for the Jx board 1v1
+board run
 
-  soc_top$ make mimas_v2
+  soc_top$ make turtle_1v1
 
 The output of the build is placed in a newly created directory under
 output/. The name of the directory contains the current date and time.
@@ -79,19 +80,36 @@ output directory is also created.
 
 For example, it might create a directory called
 
-  soc_top/output/2015-02-15_21-44-19_mimas_v2
+  soc_top/output/2019-02-15_21-44-19_turtle_1v1
 
 and there will be a symbolic link pointing to the above directory called
 
   soc_top$ ls -l last_output
-  lrwxrwxrwx 1 geoff geoff 42 Feb  15 21:44 last_output -> output/2015-02-15_21-44-19_mimas_v2
+  lrwxrwxrwx 1 geoff geoff 42 Feb  15 21:44 last_output -> output/2019-02-15_21-44-19_turtle_1v1
 
+
+Prerequisites
+-------------
+
+The bitstream build require Xilinx ISE tools be installed and
+available on the PATH.
+
+Boards with device trees embedded in the bootloader require the
+utlitity 'dtc' is installed. dtc is distributed with the linux kernel
+source. It is also available in distro package repos
+(device-tree-compiler in Debian and Ubuntu).
+
+Building the bootloader uses an cross compiler toolchain prefixed with
+sh2-elf-. That can be changed by setting CROSS_COMPILE on the command
+line.
 
 soc_gen
 -------
 
-The Makefile targets like "mimas_v2" come from directory names in
-targets/boards.
+The Makefile targets like "turtle_1v0" come from directory names in targets/boards
+
+  soc_top$ ls targets/boards/
+  turtle_1v0 turtle_1v1 mimas_v2 ...
 
 Each of these directories contains the board-specific files including
 a Makefile, constraints file, generated VHDL files and a design.edn
@@ -101,9 +119,9 @@ https://github.com/edn-format/edn, but there are no docs about writing
 a design.edn file yet. Refer to the existing ones for examples.
 
 To run soc_gen, and regenerated the VHDL files in one of the
-targets/boards/mimas_v2 directory run
+targets/boards/turtle_1v1 directory run
 
-  soc_top$ make mimas_v2 TARGET=soc_gen
+  soc_top$ make turtle_1v1 TARGET=soc_gen
 
 Run soc_gen against all boards by running
 
@@ -112,7 +130,7 @@ Run soc_gen against all boards by running
 You can also pass a regular expression to select which boards you want
 to run with the BOARDS parameter
 
-  soc_top$ make soc_gen BOARDS="mimas"
+  soc_top$ make soc_gen BOARDS="turtle"
 
 However, to run above command you'll need to do one of two things:
 

@@ -17,7 +17,8 @@ begin
       ibus_o => cpu0_ibus_o,
       ibus_i => cpu0_ibus_i,
       dbus_o => instr_dbus_o,
-      dbus_i => instr_dbus_i);
+      dbus_i => instr_dbus_i,
+      dbus_ack_r => instr_dbus_i.ack );
 
   -- combine the instruction and data DDR buses
   u_bmux : multi_master_bus_mux port map(

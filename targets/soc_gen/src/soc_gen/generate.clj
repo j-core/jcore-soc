@@ -6,10 +6,12 @@
     [errors :as errors]
     [iobufs :as iobufs]
     [devices :as devices]
-    [parse :as parse]
+    [parse :as parse]]
+   [soc-gen.plugins
     c-header
     device-tree
-    irq]
+    irq
+    [plugin :as plugin]]
    [clojure.java.io :as jio]
    [clojure.set :as set]
    [clojure.math.combinatorics :as comb]
@@ -139,14 +141,16 @@
        (v/instantiate-component label (v/component (:class device)) [])
        (str "WARNING: Device \"" (:class device) "\" is unknown")))))
 
+(defn- type-combinations [& types]
+  (->> types
+       (map #(if (keyword? %) [%] %))
+       (apply comb/cartesian-product)
+       (map #(set (filter identity %)))
+       set))
+
 (defn- filter-signals-by-context
   [context-sets & types]
-  (let [possible-sets
-        (->> types
-             (map #(if (keyword? %) [%] %))
-             (apply comb/cartesian-product)
-             (map #(set (filter identity %)))
-             set)]
+  (let [possible-sets (apply type-combinations types)]
     (mapcat context-sets possible-sets)))
 
 (defn- zero-pad-bin [x n]
@@ -309,7 +313,9 @@
           (println (zero-pad-bin (:base-addr dev) 32) (:name dev)))
 
         (let [func
-              (-> (v/func-body "decode_address" devices-enum [(v/id addr) (.getType addr)])
+              (cond->
+                  (v/func-body "decode_address" devices-enum [(v/id addr) (.getType addr)])
+                  (not (empty? devices))
                   (v/add-all v/statements
                              (v/set-comments
                               (if (<= (.length prefix) 4)
@@ -580,6 +586,18 @@
                                     device-classes device-prefixes)
         enables-fn (create-device-enables-fn enables-type device-literals data-bus-devices
                                              device-classes device-prefixes)
+
+        ;; override some of the global signals with local equivalents
+        devices-signals
+        (into
+         global-signals
+         (map
+          (fn [[sig-name local-name]]
+            [sig-name
+             (update-in (get global-signals sig-name) [:signal]
+                        #(v/signal local-name %))])
+          (:devices-extra (:signal-locations design))))
+
         devices
         (->>
          devices
@@ -597,7 +615,7 @@
                  :inst (instantiate-device design dev
                                            (device-label dev)
                                            bus-signals
-                                           global-signals
+                                           devices-signals
                                            (get (:port-overrides desc) name)
                                            (get (:generic-overrides desc) name)
                                            (get ring-elems (:name dev))))])))
@@ -611,6 +629,9 @@
              (map
               (comp :signal global-signals)
               (:devices (:signal-locations design)))
+             (map
+              (comp :signal devices-signals)
+              (keys (:devices-extra (:signal-locations design))))
              (:decls pbus-mux)
              (when-let [ring-sigs (seq (mapcat :signals rings))]
                (concat
@@ -625,6 +646,11 @@
               #_enables-fn]
              (:declarations desc))
             (v/add-all v/statements
+                       (v/set-comments
+                        (map
+                         #(v/cond-assign (:signal (global-signals %)) (:signal (devices-signals %)))
+                         (keys (:devices-extra (:signal-locations design))))
+                        "Assign output ports that are also read")
                        (:statements pbus-mux)
                        (v/set-comments
                         [(v/cond-assign active-dev
@@ -694,6 +720,17 @@
 (defn generate-top [design desc]
   (let [global-signals (:global-signals design)
 
+        ;; override some of the global signals with local equivalents
+        entity-signals
+        (into
+         global-signals
+         (map
+          (fn [[sig-name local-name]]
+            [sig-name
+             (update-in (get global-signals sig-name) [:signal]
+                        #(v/signal local-name %))])
+          (:top-extra (:signal-locations design))))
+
         instantiations
         (->> (:top-entities design)
              (sort)
@@ -703,7 +740,7 @@
                  label
                  (sort
                   (instantiate-ports design {:type :top :id label}
-                                     (:ports entity) global-signals))
+                                     (:ports entity) entity-signals))
                  (sort (:user-generics entity))))))
         
         devices-inst
@@ -711,7 +748,7 @@
          "devices"
          (v/libify-arch (:device-arch design) "work")
          (sort
-          (map (fn [[n p]] [n (:signal (global-signals n))])
+          (map (fn [[n p]] [n (:signal (entity-signals n))])
                (:top-devices (:signal-locations design)))))
 
         entity
@@ -734,8 +771,16 @@
                   (map v/component))
              (map
               (comp :signal global-signals)
-              (:top (:signal-locations design))))
+              (:top (:signal-locations design)))
+             (map
+              (comp :signal entity-signals)
+              (keys (:top-extra (:signal-locations design)))))
             (v/add-all v/statements
+                       (v/set-comments
+                        (map
+                         #(v/cond-assign (:signal (global-signals %)) (:signal (entity-signals %)))
+                         (keys (:top-extra (:signal-locations design))))
+                        "Assign output ports that are also read")
                        instantiations
                        devices-inst
                        (v/set-comments
@@ -755,6 +800,30 @@
 
 (defn- pad-space-right [^String s len]
   (str s (s/join (repeat (- len (.length s)) \ ))))
+
+(defn- create-tsmc-io-components []
+  (v/set-comments
+   (for [drive-strength ["0204" "0408" "0812" "1216"]
+         pull-up [true false]
+         schmitt [true false]
+         slew-rate [true false]]
+     (-> (v/component (str "P"
+                           (if slew-rate "R" "D")
+                           (if pull-up "U" "D")
+                           "W"
+                           drive-strength
+                           (when schmitt "S")
+                           "CDG"))
+         (v/add-in-ports
+          (map #(v/signal % v/std-logic)
+               ["DS" "OEN" "I" "PE" "IE"]))
+         (v/add-out-ports
+          (map #(v/signal % v/std-logic)
+               ["C"]))
+         (v/add-inout-ports
+          (map #(v/signal % v/std-logic)
+               ["PAD"]))))
+   "TSMC I/O Cells"))
 
 (defn generate-pad-ring [design desc]
   (let [global-signals (:global-signals design)
@@ -1050,7 +1119,11 @@
         entity
         (reduce
          (fn [entity pin]
-           ((case (:dir pin)
+           ((case (if (= (:target design) :tsmc)
+                    ;; treat all pins as inout for asic because IO
+                    ;; cell PAD is inout
+                    :inout
+                    (:dir pin))
               :in v/add-in-ports
               :out v/add-out-ports
               :inout v/add-inout-ports
@@ -1092,6 +1165,8 @@
         (-> (v/architecture "impl" entity)
             (v/add-declarations
              pin-attrs
+             (when (= (:target design) :tsmc)
+               (create-tsmc-io-components))
              (v/set-comments
               (->> (vals (:padring-entities design))
                    (filter :instantiate-component?)
@@ -1114,8 +1189,9 @@
                        iobufs))
 
         uses (concat
-              [(v/lib-clause "unisim")
-               (v/use-clause "unisim.vcomponents.all")])]
+              (when-not (= (:target design) :tsmc)
+                [(v/lib-clause "unisim")
+                 (v/use-clause "unisim.vcomponents.all")]))]
 
     [design
      (v/add-all (v/vhdl-file) v/elements
@@ -1130,10 +1206,9 @@
   "We are generating three entities: padring, top, and devices.
 Determine which signals are declared as signals in each entitiy.
 Decide which signals are ports of the top and devices entities and
-whehter they are in or out ports."
+whether they are in or out ports."
   [designs]
   (let [context-sets (:context-sets designs)
-
         find-src-context
         (fn [signal]
           (let [contexts
@@ -1148,23 +1223,49 @@ whehter they are in or out ports."
               (throw (Exception. (str "Signal " (:id signal)
                                       " must be output from a single context: "
                                       (s/join " " contexts))))
-              (first contexts))))]
+              (first contexts))))
+
+        find-in-out-signals
+        (fn [signals ctx]
+          (filter
+           (fn [s]
+             (= #{:in :out}
+                (->> (:ports s)
+                     (filter #(= (:type (:context %)) ctx))
+                     (map :dir)
+                     set)))
+           signals))
+
+        ;; signals that go between padring and top. These are the ports of soc.vhd.
+        padring-top-signals
+        (filter-signals-by-context
+         context-sets
+         [:pin :padring :expose] [:pin :padring :expose] [:pin :padring :expose]
+         [:top :device] [:top :device])
+
+        top-devices-signals
+        (filter-signals-by-context
+         context-sets
+         ;; signals that go between top and devices. These are the ports of devices.vhd
+         [:pin :padring :expose :top]
+         [:pin :padring :expose :top]
+         [:pin :padring :expose :top]
+         [:pin :padring :expose :top]
+         :device)
+
+        ]
 
     (assoc designs
       :signal-locations
       {:padring-top
        (sort
-        (->>
-         (filter-signals-by-context
-          context-sets
-          [:pin :padring :expose] [:pin :padring :expose] [:pin :padring :expose]
-          [:top :device] [:top :device])
-         (map (fn [s] [(:id s) ({:pin :in
+        (map (fn [s] [(:id s) ({:pin :in
                                 :padring :in
                                 :expose :in
                                 :device :out
                                 :top :out}
-                               (find-src-context s))]))))
+                               (find-src-context s))])
+             padring-top-signals))
 
        :top-devices
        (sort (map (fn [s] [(:id s) ({:pin :in
@@ -1173,17 +1274,12 @@ whehter they are in or out ports."
                                     :device :out
                                     :top :in}
                                    (find-src-context s))])
-                  (filter-signals-by-context
-                   context-sets
-                   [:pin :padring :expose :top]
-                   [:pin :padring :expose :top]
-                   [:pin :padring :expose :top]
-                   [:pin :padring :expose :top]
-                   :device)))
+                  top-devices-signals))
 
        :padring
        (sort (map :id (filter-signals-by-context
                        context-sets
+                       ;; signals that are in padring
                        [:pin :padring :expose]
                        [:pin :padring :expose]
                        [:pin :padring :expose]
@@ -1193,13 +1289,31 @@ whehter they are in or out ports."
        :top
        (sort (map :id (filter-signals-by-context
                        context-sets
+                       ;; signals that are in top but not in padring
                        :top
                        [:device nil])))
 
+       :top-extra
+       (into {}
+             (map
+              (fn [s] [(:id s) (str "sig_" (:id s))]) ;; create unique name for signal
+              (find-in-out-signals padring-top-signals :top)))
+
        :devices
-        (sort (map :id (filter-signals-by-context
+       (sort (map :id (filter-signals-by-context
                         context-sets
-                        :device)))})))
+                        ;; signals that are only in devices
+                        :device)))
+
+       ;; if a port signal of devices.vhd is output from one device
+       ;; and input into another, then there needs to be an additional
+       ;; signal declared, because an output port cannot be read.
+       :devices-extra
+       (into {}
+             (map
+              (fn [s] [(:id s) (str "sig_" (:id s))]) ;; create unique name for signal
+              (find-in-out-signals top-devices-signals :device)))
+       })))
 
 (defn- preprocess-design
   "augments a design with any preprocessing that would be useful when
@@ -1254,7 +1368,6 @@ whehter they are in or out ports."
                       (set (map (comp :type :context) (:ports signal)))))))
 
             (update-in [:zero-signals] identity))
-
         design (categorize-signals design)]
     design))
 
@@ -1274,10 +1387,10 @@ whehter they are in or out ports."
 
 (defn- create-plugin [name]
   (case name
-    "device_tree" (soc-gen.device-tree/->DeviceTreePlugin)
-    "board.h" (soc-gen.c-header/->CHeaderPlugin)
-    "aic1" (soc-gen.irq/->AIC1Plugin)
-    "aic2" (soc-gen.irq/->AIC2Plugin)
+    "device_tree" (soc-gen.plugins.device-tree/->DeviceTreePlugin)
+    "board.h" (soc-gen.plugins.c-header/->CHeaderPlugin)
+    "aic1" (soc-gen.plugins.irq/->AIC1Plugin)
+    "aic2" (soc-gen.plugins.irq/->AIC2Plugin)
     nil))
 
 (defn generate-design [design directory]
@@ -1293,6 +1406,9 @@ whehter they are in or out ports."
 
     ;; TODO: should we delete existing files in the directory?
     (errors/wrap-errors
+     (doseq [[p n] (frequencies  (:plugins design))]
+       (when (> n 1)
+         (errors/add-error (str "Duplicate plugin \"" p "\""))))
      (let [plugins
            (reduce
             (fn [plugins n]
@@ -1312,7 +1428,7 @@ whehter they are in or out ports."
            [plugins design]
            (reduce
             (fn [[plugs design] p]
-              (let [[p design] (soc-gen.plugins/on-pregen p design)]
+              (let [[p design] (plugin/on-pregen p design)]
                 [(conj plugs p) design]))
             [[] design]
             plugins)
@@ -1324,7 +1440,7 @@ whehter they are in or out ports."
            (fn [plugins design file-id file-desc]
              (reduce
               (fn [desc p]
-                (soc-gen.plugins/on-generate p design file-id desc))
+                (plugin/on-generate p design file-id desc))
               file-desc
               plugins))
 
@@ -1364,14 +1480,14 @@ whehter they are in or out ports."
                  files
                  (for [{file-id :id file-name :name
                         :as desc}
-                       (soc-gen.plugins/file-list plugin)]
+                       (plugin/file-list plugin)]
 
                    (let [desc (plugin-gen plugins design file-id file-name)]
                      {:id file-id
                       :name file-name
                       :buildmk? (get desc :buildmk? false)
                       :content
-                      (soc-gen.plugins/file-contents plugin design file-id desc)}))))
+                      (plugin/file-contents plugin design file-id desc)}))))
               []
               plugins)]
 

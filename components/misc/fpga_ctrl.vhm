@@ -1,0 +1,84 @@
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+use work.cpu2j0_pack.all;
+use work.fpga_cap_pack.all;
+use work.attr_pack.all;
+
+entity fpga_ctrl is
+  port (
+    clk_sys : in std_logic;
+    clk_fpga_cfg : in std_logic;
+    rst : in std_logic;
+
+    db_i : in cpu_data_o_t;
+    db_o : out cpu_data_i_t);
+
+  attribute soc_port_global_name of clk_sys : signal is "clk_sys";
+  attribute soc_port_global_name of clk_fpga_cfg : signal is "clk_fpga_cfg2";
+end entity;
+
+architecture arch of fpga_ctrl is
+  signal reboot : std_logic;
+
+  type reg_t is record
+    seen_wr : std_logic;
+    wr_pulse : std_logic;
+  end record;
+
+  constant REG_RESET : reg_t := (
+    others => '0');
+
+  register variable this : reg_t reset := REG_RESET;
+begin
+
+  -- When db_i.wr goes high, send a pulse from the cpu to the fpga_cfg
+  -- clock domain to use as the reboot enable signal.
+
+  reboot_sync : entity work.flagsync
+    port map (
+      rst => rst,
+      clkA => clk_sys,
+      inA => this'register.wr_pulse,
+      clkB => clk_fpga_cfg,
+      outB => reboot);
+
+  db_o.ack <= db_i.en;
+  db_o.d <= (others => '0');
+
+  p : process(this, db_i)
+    register this when clk_sys = '1' and clk_sys'event reset when rst = '1';
+  begin
+    -- Generate a pulse when a write with bit0=1 occurs, but only one
+    -- pulse. FPGA should reboot, so one pulse is enough.
+    this.wr_pulse := '0';
+    if this.seen_wr = '0' and db_i.wr = '1' and db_i.d(0) = '1' then
+      this.seen_wr := '1';
+      this.wr_pulse := '1';
+    end if;
+  end process;
+
+  cap : fpga_reboot
+    port map (
+      clk => clk_fpga_cfg,
+      rst => rst,
+      en => reboot);
+
+end architecture;
+
+configuration fpga_ctrl_s6 of fpga_ctrl is
+  for arch
+    for all : fpga_reboot
+      use entity work.fpga_reboot(s6);
+    end for;
+  end for;
+end configuration;
+
+configuration fpga_ctrl_k7 of fpga_ctrl is
+  for arch
+--    for all : fpga_reboot
+--      use entity work.fpga_reboot(k7);
+--    end for;
+  end for;
+end configuration;

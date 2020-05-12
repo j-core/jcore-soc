@@ -1,0 +1,67 @@
+#! /bin/csh -f
+
+# sh_p02_51_exec_byte
+
+# aic -----
+  ( echo 'aic arch= behav' ; \
+    cat ../../../components/misc/aic.vhd ) | \
+    script/sh_p02_52_exec_byte_sub \
+    > ../../byte_bus/aic_slave_process.vhd
+
+# aic2 -----
+  ( echo 'aic0 arch= behav' ; \
+    cat ../../../components/misc/aic2.vhm ) | \
+    script/sh_p02_52_exec_byte_sub \
+    > ../../byte_bus/aic2_slave_process.vhd
+
+# cache_ctrl -----
+  ( echo 'cache_ctrl arch= arch' ; \
+    cat ../../../components/icache/icache_modereg.vhm ) | \
+    script/sh_p02_52_exec_byte_sub \
+    > ../../byte_bus/icache_modereg_slave_process.vhd
+
+# cache_ctrl_wsbu -----
+  ( echo 'cache_ctrl_wsbu arch= with_sbu' ; \
+    cat ../../../components/icache/icache_modereg_wsbu.vhm ) | \
+    script/sh_p02_52_exec_byte_sub \
+    > ../../byte_bus/icache_modereg_wsbu_slave_process.vhd
+
+# dma -----
+  ( echo 'dma arch= no_arch_but_config' ; \
+    cat ../../../components/dma/dma_db.vhd ) | \
+    script/sh_p02_52_exec_byte_sub | \
+    sed -e \
+   's/^.*dma : entity.*$/    dma : configuration work.dma_db_inferred/' \
+    > ../../byte_bus/dma_db_slave_process.vhd
+
+# dsm_realign -----
+  ( echo 'dsm_realign arch= arch' ; \
+    cat ../../../components/bitlink/realign/dsm_realign.vhm ) | \
+    script/sh_p02_52_exec_byte_sub \
+    > ../../byte_bus/dsm_realign_slave_process.vhd
+
+# phase_correlator -----
+  ( echo 'phase_correlator0 arch= sbram' ; \
+    cat ../../../components/bitlink/phasor/ring_phase_correlator.vhm ) | \
+    script/sh_p02_52_exec_byte_sub \
+    > ../../byte_bus/ring_phase_correlator_slave_process.vhd
+
+# sau_power ----
+  ( echo 'sau_power arch= arch' ; \
+    cat ../../../components/misc/sau_power.vhd ) | \
+    script/sh_p02_52_exec_byte_sub \
+    > ../../byte_bus/sau_power_slave_process.vhd
+
+# rms_power -----
+  ( echo 'rms_power0 arch= ashiftreg' ; \
+    cat ../../../components/bitlink/ring/ring_rms_power.vhm ) | \
+    script/sh_p02_52_exec_byte_sub \
+    > ../../byte_bus/ring_rms_power_slave_process.vhd
+
+# phase_correlator -----
+  ( echo 'time_dds arch= arch' ; \
+    cat ../../../components/bitlink/phasor/time_dds_db.vhm ) | \
+    script/sh_p02_52_exec_byte_sub \
+    > ../../byte_bus/time_dds_db_slave_process.vhd
+
+

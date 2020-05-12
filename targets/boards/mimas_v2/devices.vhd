@@ -13,6 +13,7 @@ use work.config.all;
 use work.clk_config.all;
 use work.cpu2j0_pack.all;
 use work.data_bus_pack.all;
+use work.ddrc_cnt_pack.all;
 entity devices is
     port (
         cache01sel_ctrl_temp : out std_logic;
@@ -29,6 +30,7 @@ entity devices is
         cpu1_periph_dbus_o : in cpu_data_o_t;
         dcache0_ctrl : out cache_ctrl_t;
         dcache1_ctrl : out cache_ctrl_t;
+        ddr_status : in ddr_status_o_t;
         flash_clk : out std_logic;
         flash_cs : out std_logic_vector(1 downto 0);
         flash_miso : in std_logic;
@@ -37,6 +39,7 @@ entity devices is
         icache1_ctrl : out cache_ctrl_t;
         pi : in std_logic_vector(31 downto 0);
         po : out std_logic_vector(31 downto 0);
+        reboot : out std_logic;
         reset : in std_logic;
         uart0_rx : in std_logic;
         uart0_tx : out std_logic
@@ -94,6 +97,7 @@ begin
     aic0 : entity work.aic(behav)
         generic map (
             c_busperiod => CFG_CLK_CPU_PERIOD_NS,
+            rtc_sec_length34b => FALSE,
             vector_numbers => (x"00", x"12", x"00", x"14", x"15", x"00", x"00", x"00")
         )
         port map (
@@ -106,6 +110,7 @@ begin
             event_i => cpu0_event_o,
             event_o => cpu0_event_i,
             irq_i => irqs0,
+            reboot => reboot,
             rst_i => reset,
             rtc_nsec => open,
             rtc_sec => open
@@ -122,6 +127,7 @@ begin
             cpu1_ddr_ibus_o => cpu1_ddr_ibus_o,
             db_i => devs_bus_o(DEV_CACHE_CTRL),
             db_o => devs_bus_i(DEV_CACHE_CTRL),
+            ddr_status => ddr_status,
             int0 => irqs0(3),
             int1 => open,
             rst => reset
@@ -132,7 +138,10 @@ begin
             num_cs => 2
         )
         port map (
+            busy => open,
             clk => clk_sys,
+            cpha => '0',
+            cpol => '0',
             cs => flash_cs,
             db_i => devs_bus_o(DEV_FLASH),
             db_o => devs_bus_i(DEV_FLASH),

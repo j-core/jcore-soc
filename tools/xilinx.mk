@@ -35,7 +35,7 @@ $(project).bin: $(project).mcs
 	promgen -w -p bin -r $^
 
 $(project).bit: $(project)_par.ncd
-	bitgen $(intstyle) -g DriveDone:yes -g StartupClk:Cclk $(bitgen_opts) -w $(project)_par.ncd $(project).bit
+	bitgen $(intstyle) -g StartupClk:Cclk $(bitgen_opts) -w $(project)_par.ncd $(project).bit
 
 %_par.ncd: %.ncd
 	par $(intstyle) $(par_opts) -w $< $@
@@ -84,10 +84,10 @@ $(project).scr: $(optfile) force
 	rm -f $@.temp
 
 $(project).post_map.twr:
-	trce -v 10 -l 3 -u 3 -fastpaths -timegroups $(project).ncd $(project).pcf -o $@ -ucf $(project).ucf
+	trce -v 10 -l 3 -u 3 -s 2 -fastpaths -timegroups $(project).ncd $(project).pcf -o $@ -ucf $(project).ucf
 
 $(project).twr:
-	trce -v 3 -tsi $(project).tsi -l 3 -u 3 -fastpaths -timegroups $(project)_par.ncd $(project).pcf -o $(project).twr -ucf $(project).ucf
+	trce -v 3 -tsi $(project).tsi -l 3 -u 3 -s 2 -fastpaths -timegroups $(project)_par.ncd $(project).pcf -o $(project).twr -ucf $(project).ucf
 
 $(project)_err.twr:
 	trce -e 10 -l 3 -u 3 $(project)_par.ncd $(project).pcf -o $(project)_err.twr -ucf $(project).ucf

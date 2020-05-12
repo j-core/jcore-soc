@@ -75,10 +75,13 @@ package cpu_core_pack is
     db0_o : out cpu_data_i_t;
     db1_o : out cpu_data_i_t;
     cpu0ram_a_en : out std_logic;
-    cpu1ram_a_en : out std_logic);
+    cpu1ram_a_en : out std_logic;
+    cpu1eni : in std_logic);
   end component;
 
   component cpu_core is
+    generic ( 
+      COPRO_DECODE : boolean := true);
     port (
       clk : in std_logic;
       rst : in std_logic;
@@ -97,7 +100,10 @@ package cpu_core_pack is
       event_i : in  cpu_event_i_t;
 
       data_master_en : out std_logic;
-      data_master_ack : out std_logic);
+      data_master_ack : out std_logic;
+
+      copro_o : out cop_o_t;
+      copro_i : in  cop_i_t);
   end component;
 end package;
 

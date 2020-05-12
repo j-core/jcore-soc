@@ -2,7 +2,8 @@
 -- correctly. The set_en to the underlying flancter is pulsed only once when
 -- the output to the set clk domain is low. Similarly, the underlying clr_en is
 -- pulsed only once when the output to the clr clk domain is high. This is to
--- avoid simulataneously setting both set_en and clr_en, which the 
+-- avoid simulataneously setting both set_en and clr_en, which the flancter
+-- does not support.
 
 library ieee;
 use ieee.std_logic_1164.all;

@@ -1,0 +1,98 @@
+library ieee;
+use ieee.std_logic_1164.all;
+use work.dma_pack.all;
+use work.gpsif_sub_pack.all;
+
+entity dma_preq_arb is
+  port (
+    clk     : in  std_logic;
+    rst     : in  std_logic;
+    actp_arb_i : out actp_i_t;
+    actp_src0_i : in dma_req_t;
+    actp_src1_i : in actp_i_t;
+    actp_src2_i : in actp_i_t );
+end dma_preq_arb;
+
+-- input spec
+--   for each actp_src0_i, actp_src1_i, actp_src2_i, 
+--   if en = '1' in cycle i
+--   next earliest en = '1' is cycle i+8
+-- output spec
+--   if en = 1 in cycle i
+--   next earliest en = 1 is cycle i+2 (bitreq actpsub_i input spec)
+
+architecture beh of dma_preq_arb is
+  type dma_preq_arb_reg_t is record
+    actp_src0_i : actp_i_t;
+    actp_src1_i : actp_i_t;
+    actp_src2_i : actp_i_t;
+    actp_arb_i  : actp_i_t;
+  end record;
+  constant DMA_PREQ_ARB_RESET : dma_preq_arb_reg_t :=
+    ((req => (others => '0')), (req => (others => '0')),
+     (req => (others => '0')), (req => (others => '0')));
+
+  register variable this : dma_preq_arb_reg_t reset := DMA_PREQ_ARB_RESET;
+
+  signal dummy0 : std_logic;
+  signal dummy1 : std_logic;
+
+begin
+  p0 : process (this, actp_src0_i, actp_src1_i, actp_src2_i)
+    register this when clk = '1' and clk'event reset when rst = '1';
+
+    variable nx   : dma_preq_arb_reg_t;
+    variable va0  : actp_i_t; -- accum before clear;
+    variable va1  : actp_i_t; -- accum before clear;
+    variable va2  : actp_i_t; -- accum before clear;
+    variable tmp4 : std_logic_vector(3 downto 0);
+    variable arb  : integer range 0 to 2;
+  begin
+
+    -- accumulate, with making ch field ( with en=0 ) zero ---------------
+    if(                  actp_src0_i.req(6)  = '1') then
+         va0.req :=      actp_src0_i.req;
+    else va0     := this.actp_src0_i    ; end if;
+    if(                  actp_src1_i.req(6)  = '1') then
+         va1     :=      actp_src1_i    ;
+    else va1     := this.actp_src1_i    ; end if;
+    if(                  actp_src2_i.req(6)  = '1') then
+         va2     :=      actp_src2_i    ;
+    else va2     := this.actp_src2_i    ; end if;
+
+    -- priority logic (fixed priority (0>1>2))
+    tmp4  := '0' 
+          &  this.actp_arb_i.req(6) 
+          &  va0.req(6) 
+          &  va1.req(6);
+
+    case tmp4 is
+    when x"2" | x"3" => arb := 0; nx.actp_arb_i.req := va0.req;
+    when x"1"        => arb := 1; nx.actp_arb_i.req := va1.req;
+    when x"0"        => arb := 2; nx.actp_arb_i.req := va2.req;
+    when others      => arb := 2; nx.actp_arb_i.req := (others => '0');
+     --  +-> others = {x"4", x"5", x"6", x"7"}, do not process further req.
+    end case;
+
+    -- initial value ------------+
+                                 nx.actp_src0_i     := va0    ;
+                                 nx.actp_src1_i     := va1    ;
+                                 nx.actp_src2_i     := va2    ;
+    -- initial value ------------+
+    -- clear request 
+    if(nx.actp_arb_i.req(6) = '1') then
+      case arb is
+      when 0 =>                  nx.actp_src0_i.req := (others => '0');
+      when 1 =>                  nx.actp_src1_i.req := (others => '0');
+      when others =>             nx.actp_src2_i.req := (others => '0');
+      end case;
+    end if;
+
+    this := nx;
+  end process;
+
+  -- output drive
+  actp_arb_i <= this'combinatorial.actp_arb_i;
+  
+end beh;
+

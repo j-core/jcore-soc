@@ -11,3 +11,5 @@ $(VHDLS) += flancter.vhd
 $(VHDLS) += guardflancter.vhd
 $(VHDLS) += gray_pkg.vhd
 $(VHDLS) += syncgray.vhd
+$(VHDLS) += data_bus_delay.vhd
+$(VHDLS) += instr_bus_delay.vhd

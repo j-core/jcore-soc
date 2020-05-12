@@ -1,0 +1,11 @@
+############################################################################
+# Ethernet
+############################################################################
+
+NET PIN_ETH_RESET_N     TIG;
+
+# EMAC clocks
+NET "eth_rx_clk" TNM_NET = erx_clk;
+TIMESPEC TS_ERX_CLOCK = PERIOD erx_clk 25 MHz;
+NET "eth_tx_clk" TNM_NET = etx_clk;
+TIMESPEC TS_ETX_CLOCK = PERIOD etx_clk 25 MHz;

@@ -16,7 +16,7 @@ entity gpio2 is
     d_i : in std_logic_vector(31 downto 0);
     d_o : out std_logic_vector(31 downto 0);
     d_t : out std_logic_vector(31 downto 0));
-  attribute sei_port_irq of irq : signal is true;
+  attribute soc_port_irq of irq : signal is true;
 end entity;
 
 architecture arch of gpio2 is

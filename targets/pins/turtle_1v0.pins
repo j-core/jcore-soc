@@ -1,0 +1,333 @@
+Pinlist
+
+Exported from Turtle Board 1V0.sch at 01/04/2016 2:04 PM
+
+EAGLE Version 7.4.0 Copyright (c) 1988-2015 CadSoft
+
+Part     Pad      Pin        Dir      Net
+
+IC3      A1       GND        io       GND
+         A2       IO_L2N_0   io       USB0_N
+         A3       IO_L4N_0   io       !VID-EN
+         A4       IO_L5N_0   io       AUDIO-R
+         A5       IO_L6N_0   io       AUDIO-L
+         A6       IO_L8N_VREF_0 io       VID-LUMA1
+         A7       IO_L10N_0  io                *** unconnected ***
+         A8       IO_L33N_0  io       HDMI-D2_N
+         A9       IO_L35N_GCLK16_0 io       HDMI-D1_N
+         B1       VCCAUX     io       3V3
+         B2       IO_L2P_0   io       USB0_P
+         B3       IO_L4P_0   io       VID-CHROMA1
+         B4       IO_L5P_0   io       VID-CHROMA0
+         B5       VCCO_0     io       3V3
+         B6       IO_L8P_0   io       VID-LUMA3
+         B7       GND        io       GND
+         B8       IO_L33P_0  io       HDMI-D2_P
+         B9       IO_L35P_GCLK17_0 io       HDMI-D1_P
+         C1       IO_L83N_VREF_3 io                *** unconnected ***
+         C2       IO_L83P_3  io                *** unconnected ***
+         C3       GND        io       GND
+         C4       IO_L1N_VREF_0 io       USB-CLK
+         C5       IO_L6P_0   io       !GL850-RESET
+         C6       IO_L3N_0   io                *** unconnected ***
+         C7       IO_L10P_0  io       VID-LUMA2
+         C8       IO_L11N_0  io                *** unconnected ***
+         C9       IO_L34N_GCLK18_0 io                *** unconnected ***
+         D1       IO_L52N_M3A9_3 io       DDR_A12
+         D2       IO_L52P_M3A8_3 io       DDR_A8
+         D3       IO_L54N_M3A11_3 io       DDR_A11
+         D4       IO_L1P_HSWAPEN_0 io                *** unconnected ***
+         D5       GND        io       GND
+         D6       IO_L3P_0   io                *** unconnected ***
+         D7       VCCO_0     io       3V3
+         D8       IO_L11P_0  io                *** unconnected ***
+         D9       IO_L34P_GCLK19_0 io                *** unconnected ***
+         E1       IO_L50N_M3BA2_3 io                *** unconnected ***
+         E2       VCCO_3     io       1V8
+         E3       IO_L50P_M3WE_3 io       !DDR_WE
+         E4       IO_L54P_M3RESET_3 io                *** unconnected ***
+         E5       VCCAUX     io       3V3
+         E6       NC         io                *** unconnected ***
+         E7       NC         io                *** unconnected ***
+         E8       NC         io                *** unconnected ***
+         E9       VCCAUX     io       3V3
+         F1       IO_L48N_M3BA1_3 io       DDR_BA1
+         F2       IO_L48P_M3BA0_3 io       DDR_BA0
+         F3       IO_L51N_M3A4_3 io       DDR_A4
+         F4       IO_L51P_M3A10_3 io       DDR_A10
+         F5       IO_L55N_M3A14_3 io                *** unconnected ***
+         F6       IO_L55P_M3A13_3 io       DDR_A13
+         F7       NC         io                *** unconnected ***
+         F8       NC         io                *** unconnected ***
+         F9       IO_L38N_VREF_0 io                *** unconnected ***
+         G1       IO_L46N_M3CLKN_3 io       DDR_CK_N
+         G2       GND        io       GND
+         G3       IO_L46P_M3CLK_3 io       DDR_CK_P
+         G4       VCCO_3     io       1V8
+         G5       GND        io       GND
+         G6       IO_L53N_M3A12_3 io       DDR_A9
+         G7       VCCINT     io       1V2
+         G8       NC         io                *** unconnected ***
+         G9       IO_L38P_0  io                *** unconnected ***
+         H1       IO_L41N_GCLK26_M3DQ5_3 io       DDR_DQ5
+         H2       IO_L41P_GCLK27_M3DQ4_3 io       DDR_DQ4
+         H3       IO_L44N_GCLK20_M3A6_3 io       DDR_A6
+         H4       IO_L44P_GCLK21_M3A5_3 io       DDR_A5
+         H5       IO_L49N_M3A2_3 io       DDR_A2
+         H6       IO_L49P_M3A7_3 io       DDR_A7
+         H7       IO_L53P_M3CKE_3 io       DDR_CKE
+         H8       GND        io       GND
+         H9       VCCINT     io       1V2
+         J1       IO_L40N_M3DQ7_3 io       DDR_DQ7
+         J2       VCCO_3     io       1V8
+         J3       IO_L40P_M3DQ6_3 io       DDR_DQ6
+         J4       GND        io       GND
+         J5       VCCO_3     io       1V8
+         J6       IO_L47N_M3A1_3 io       DDR_LDQS
+         J7       IO_L47P_M3A0_3 io       DDR_A0
+         J8       VCCINT     io       1V2
+         J9       GND        io       GND
+         K1       IO_L38N_M3DQ3_3 io       DDR_DQ3
+         K2       IO_L38P_M3DQ2_3 io       DDR_DQ2
+         K3       IO_L42N_GCLK24_M3LDM_3 io       DDR_LDM
+         K4       IO_L42P_GCLK25_TRDY2_M3UDM_3 io       DDR_UDM
+         K5       IO_L43N_GCLK22_IRDY2_M3CASN_3 io       !DDR_CAS
+         K6       IO_L45N_M3ODT_3 io                *** unconnected ***
+         K7       VCCAUX     io       3V3
+         K8       GND        io       GND
+         K9       VCCINT     io       1V2
+         L1       IO_L37N_M3DQ1_3 io       DDR_DQ1
+         L2       IO_L37P_M3DQ0_3 io       DDR_DQ0
+         L3       IO_L39N_M3LDQSN_3 io       !DDR_RAS
+         L4       IO_L39P_M3LDQS_3 io       DDR_A1
+         L5       IO_L43P_GCLK23_M3RASN_3 io                *** unconnected ***
+         L6       IO_L31P_3  io                *** unconnected ***
+         L7       IO_L45P_M3A3_3 io                *** unconnected ***
+         L8       VCCINT     io       1V2
+         L9       GND        io       GND
+         M1       IO_L36N_M3DQ9_3 io       DDR_DQ9
+         M2       GND        io       GND
+         M3       IO_L36P_M3DQ8_3 io       DDR_DQ8
+         M4       VCCO_3     io       1V8
+         M5       IO_L31N_VREF_3 io                *** unconnected ***
+         M6       GND        io       GND
+         M7       VCCINT     io       1V2
+         M8       IO_L40P_2  io                *** unconnected ***
+         M9       VCCAUX     io       3V3
+         N1       IO_L35N_M3DQ11_3 io       DDR_DQ11
+         N2       IO_L35P_M3DQ10_3 io       DDR_DQ10
+         N3       IO_L1N_VREF_3 io                *** unconnected ***
+         N4       IO_L1P_3   io                *** unconnected ***
+         N5       IO_L64P_D8_2 io                *** unconnected ***
+         N6       IO_L47P_2  io                *** unconnected ***
+         N7       IO_L44P_2  io                *** unconnected ***
+         N8       IO_L40N_2  io                *** unconnected ***
+         N9       IO_L22N_2  io                *** unconnected ***
+         P1       IO_L34N_M3UDQSN_3 io                *** unconnected ***
+         P2       IO_L34P_M3UDQS_3 io       DDR_UDQS
+         P3       IO_L2N_3   io       DDR_A3
+         P4       IO_L2P_3   io                *** unconnected ***
+         P5       VCCAUX     io       3V3
+         P6       IO_L64N_D9_2 io                *** unconnected ***
+         P7       IO_L47N_2  io                *** unconnected ***
+         P8       IO_L44N_2  io                *** unconnected ***
+         P9       VCCO_2     io       3V3
+         R1       GND        io       GND
+         R2       VCCO_3     io       1V8
+         R3       IO_L62P_D5_2 io                *** unconnected ***
+         R4       GND        io       GND
+         R5       IO_L48P_D7_2 io       GPIO26
+         R6       VCCO_2     io       3V3
+         R7       IO_L46P_2  io                *** unconnected ***
+         R8       IO_L31P_GCLK31_D14_2 io                *** unconnected ***
+         R9       GND        io       GND
+         T1       IO_L33N_M3DQ13_3 io       DDR_DQ13
+         T2       IO_L33P_M3DQ12_3 io       DDR_DQ12
+         T3       IO_L62N_D6_2 io                *** unconnected ***
+         T4       IO_L63P_2  io       GPIO19
+         T5       IO_L48N_RDWR_B_VREF_2 io       GPIO16
+         T6       IO_L45P_2  io                *** unconnected ***
+         T7       IO_L46N_2  io                *** unconnected ***
+         T8       IO_L31N_GCLK30_D15_2 io                *** unconnected ***
+         T9       IO_L32P_GCLK29_2 io       GPIO11
+         U1       IO_L32N_M3DQ15_3 io       DDR_DQ15
+         U2       IO_L32P_M3DQ14_3 io       DDR_DQ14
+         U3       IO_L65P_INIT_B_2 io       N$66
+         U4       VCCO_2     io       3V3
+         U5       IO_L49P_D3_2 io       GPIO6
+         U6       GND        io       GND
+         U7       IO_L43P_2  io       GPIO5
+         U8       IO_L41P_2  io       GPIO7
+         U9       VCCO_2     io       3V3
+         V1       GND        io       GND
+         V2       PROGRAM_B_2 io       !FPGA-RESET
+         V3       IO_L65N_CSO_B_2 io       !CFG-SEL
+         V4       IO_L63N_2  io       GPIO13
+         V5       IO_L49N_D4_2 io       GPIO12
+         V6       IO_L45N_2  io       ID-SCL
+         V7       IO_L43N_2  io       ID-SDA
+         V8       IO_L41N_VREF_2 io       GPIO8
+         V9       IO_L32N_GCLK28_2 io       GPIO9
+         A10      IO_L37N_GCLK12_0 io       25MHZ
+         A11      IO_L39N_0  io       HDMI-D0_N
+         A12      IO_L41N_0  io       HDMI-CLK_N
+         A13      IO_L50N_0  io       HDMI-CEC
+         A14      IO_L62N_VREF_0 io       HDMI-SDA
+         A15      IO_L64N_SCP4_0 io       HDMI-HPD
+         A16      IO_L66N_SCP0_0 io       LED1
+         A17      TCK        io       TCK
+         A18      GND        io       GND
+         B10      VCCO_0     io       3V3
+         B11      IO_L39P_0  io       HDMI-D0_P
+         B12      IO_L41P_0  io       HDMI-CLK_P
+         B13      GND        io       GND
+         B14      IO_L62P_0  io       HDMI-SCL
+         B15      VCCO_0     io       3V3
+         B16      IO_L66P_SCP1_0 io       LED2
+         B17      VCCAUX     io       3V3
+         B18      TMS        io       TMS
+         C10      IO_L37P_GCLK13_0 io       USB-PWR-GOOD
+         C11      IO_L36N_GCLK14_0 io       VID-LUMA0
+         C12      NC         io                *** unconnected ***
+         C13      IO_L50P_0  io                *** unconnected ***
+         C14      IO_L65N_SCP2_0 io                *** unconnected ***
+         C15      IO_L64P_SCP5_0 io                *** unconnected ***
+         C16      GND        io       GND
+         C17      IO_L29P_A23_M1A13_1 io                *** unconnected ***
+         C18      IO_L29N_A22_M1A14_1 io       !SD-SEL
+         D10      GND        io       GND
+         D11      IO_L36P_GCLK15_0 io                *** unconnected ***
+         D12      NC         io                *** unconnected ***
+         D13      VCCO_0     io       3V3
+         D14      IO_L65P_SCP3_0 io                *** unconnected ***
+         D15      TDI        io       TDI
+         D16      TDO        io       TDO
+         D17      IO_L31P_A19_M1CKE_1 io       ETH-RXD0
+         D18      IO_L31N_A18_M1A12_1 io       ETH-RXD1
+         E10      VCCO_0     io       3V3
+         E11      NC         io                *** unconnected ***
+         E12      NC         io                *** unconnected ***
+         E13      IO_L63N_SCP6_0 io                *** unconnected ***
+         E14      VCCAUX     io       3V3
+         E15      GND        io       GND
+         E16      IO_L33P_A15_M1A10_1 io       ETH-MDIO
+         E17      VCCO_1     io       3V3
+         E18      IO_L33N_A14_M1A4_1 io       !ETH-RST
+         F10      NC         io                *** unconnected ***
+         F11      NC         io                *** unconnected ***
+         F12      NC         io                *** unconnected ***
+         F13      IO_L63P_SCP7_0 io                *** unconnected ***
+         F14      IO_L30P_A21_M1RESET_1 io                *** unconnected ***
+         F15      IO_L1P_A25_1 io       ETH-CRS-DV
+         F16      IO_L1N_A24_VREF_1 io       ETH-INTR
+         F17      IO_L35P_A11_M1A7_1 io       ETH-TXEN
+         F18      IO_L35N_A10_M1A2_1 io       ETH-CLK
+         G10      VCCAUX     io       3V3
+         G11      NC         io                *** unconnected ***
+         G12      GND        io       GND
+         G13      IO_L32N_A16_M1A9_1 io                *** unconnected ***
+         G14      IO_L30N_A20_M1A11_1 io       ETH-RXER
+         G15      VCCO_1     io       3V3
+         G16      IO_L38P_A5_M1CLK_1 io       ETH-TXD0
+         G17      GND        io       GND
+         G18      IO_L38N_A4_M1CLKN_1 io       ETH-TXD1
+         H10      GND        io       GND
+         H11      VCCINT     io       1V2
+         H12      IO_L32P_A17_M1A8_1 io                *** unconnected ***
+         H13      IO_L36P_A9_M1BA0_1 io                *** unconnected ***
+         H14      IO_L36N_A8_M1BA1_1 io       ETH-MDC
+         H15      IO_L37P_A7_M1A0_1 io                *** unconnected ***
+         H16      IO_L37N_A6_M1A1_1 io                *** unconnected ***
+         H17      IO_L43P_GCLK5_M1DQ4_1 io       ATMEL-RXD
+         H18      IO_L43N_GCLK4_M1DQ5_1 io       ATMEL-TXD
+         J10      VCCINT     io       1V2
+         J11      GND        io       GND
+         J12      VCCAUX     io       3V3
+         J13      IO_L39P_M1A3_1 io                *** unconnected ***
+         J14      VCCO_1     io       3V3
+         J15      GND        io       GND
+         J16      IO_L44P_A3_M1DQ6_1 io       !ATMEL-RST
+         J17      VCCO_1     io       3V3
+         J18      IO_L44N_A2_M1DQ7_1 io       !SD-DET
+         K10      GND        io       GND
+         K11      VCCINT     io       1V2
+         K12      IO_L34P_A13_M1WE_1 io                *** unconnected ***
+         K13      IO_L34N_A12_M1BA2_1 io                *** unconnected ***
+         K14      IO_L39N_M1ODT_1 io                *** unconnected ***
+         K15      IO_L41P_GCLK9_IRDY1_M1RASN_1 io                *** unconnected ***
+         K16      IO_L41N_GCLK8_M1CASN_1 io                *** unconnected ***
+         K17      IO_L45P_A1_M1LDQS_1 io       ATMEL-INT
+         K18      IO_L45N_A0_M1LDQSN_1 io                *** unconnected ***
+         L10      VCCINT     io       1V2
+         L11      GND        io       GND
+         L12      IO_L40P_GCLK11_M1A5_1 io                *** unconnected ***
+         L13      IO_L40N_GCLK10_M1A6_1 io                *** unconnected ***
+         L14      IO_L61P_1  io                *** unconnected ***
+         L15      IO_L42P_GCLK7_M1UDM_1 io                *** unconnected ***
+         L16      IO_L42N_GCLK6_TRDY1_M1LDM_1 io                *** unconnected ***
+         L17      IO_L46P_FCS_B_M1DQ2_1 io                *** unconnected ***
+         L18      IO_L46N_FOE_B_M1DQ3_1 io                *** unconnected ***
+         M10      IO_L22P_2  io                *** unconnected ***
+         M11      IO_L15P_2  io       FLASH-DAT1
+         M12      VCCINT     io       1V2
+         M13      IO_L61N_1  io                *** unconnected ***
+         M14      IO_L53P_1  io                *** unconnected ***
+         M15      VCCO_1     io       3V3
+         M16      IO_L47P_FWE_B_M1DQ0_1 io                *** unconnected ***
+         M17      GND        io       GND
+         M18      IO_L47N_LDC_M1DQ1_1 io                *** unconnected ***
+         N10      IO_L20P_2  io                *** unconnected ***
+         N11      IO_L15N_2  io                *** unconnected ***
+         N12      IO_L13P_M1_2 io       GND
+         N13      GND        io       GND
+         N14      IO_L53N_VREF_1 io                *** unconnected ***
+         N15      IO_L50P_M1UDQS_1 io                *** unconnected ***
+         N16      IO_L50N_M1UDQSN_1 io                *** unconnected ***
+         N17      IO_L48P_HDC_M1DQ8_1 io                *** unconnected ***
+         N18      IO_L48N_M1DQ9_1 io       ATMEL-POWER-GOOD
+         P10      VCCAUX     io       3V3
+         P11      IO_L20N_2  io                *** unconnected ***
+         P12      IO_L13N_D10_2 io       FLASH-DAT2
+         P13      CMPCS_B_2  io                *** unconnected ***
+         P14      VCCAUX     io       3V3
+         P15      IO_L74P_AWAKE_1 io                *** unconnected ***
+         P16      IO_L74N_DOUT_BUSY_1 io                *** unconnected ***
+         P17      IO_L49P_M1DQ10_1 io                *** unconnected ***
+         P18      IO_L49N_M1DQ11_1 io                *** unconnected ***
+         R10      IO_L29P_GCLK3_2 io                *** unconnected ***
+         R11      IO_L16P_2  io                *** unconnected ***
+         R12      VCCO_2     io       3V3
+         R13      IO_L3P_D0_DIN_MISO_MISO1_2 io       FLASH-MISO
+         R14      GND        io       GND
+         R15      IO_L1P_CCLK_2 io       FLASH-SCLK
+         R16      SUSPEND    io       GND
+         R17      VCCO_1     io       3V3
+         R18      GND        io       GND
+         T10      IO_L29N_GCLK2_2 io                *** unconnected ***
+         T11      IO_L16N_VREF_2 io       GPIO18
+         T12      IO_L19P_2  io                *** unconnected ***
+         T13      IO_L3N_MOSI_CSI_B_MISO0_2 io       FLASH-MOSI
+         T14      IO_L12P_D1_MISO2_2 io                *** unconnected ***
+         T15      IO_L1N_M0_CMPMISO_2 io       3V3
+         T16      GND        io       GND
+         T17      IO_L51P_M1DQ12_1 io                *** unconnected ***
+         T18      IO_L51N_M1DQ13_1 io                *** unconnected ***
+         U10      IO_L30P_GCLK1_D13_2 io       GPIO10
+         U11      IO_L23P_2  io       GPIO22
+         U12      GND        io       GND
+         U13      IO_L14P_D11_2 io       GPIO15
+         U14      VCCO_2     io       3V3
+         U15      IO_L5P_2   io                *** unconnected ***
+         U16      IO_L2P_CMPCLK_2 io       GPIO2
+         U17      IO_L52P_M1DQ14_1 io                *** unconnected ***
+         U18      IO_L52N_M1DQ15_1 io                *** unconnected ***
+         V10      IO_L30N_GCLK0_USERCCLK_2 io       GPIO25
+         V11      IO_L23N_2  io       GPIO24
+         V12      IO_L19N_2  io       GPIO27
+         V13      IO_L14N_D12_2 io       GPIO17
+         V14      IO_L12N_D2_MISO3_2 io       GPIO14
+         V15      IO_L5N_2   io       GPIO4
+         V16      IO_L2N_CMPMOSI_2 io       GPIO3
+         V17      DONE_2     io       DONE
+         V18      GND        io       GND
+

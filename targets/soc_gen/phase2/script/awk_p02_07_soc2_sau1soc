@@ -1,0 +1,24 @@
+BEGIN {
+  state = 0;
+}
+{
+  if     ($0 ~ / gps_pps : in/) {
+    state = 999;
+    memo = "this_input_file_is_processed_ph2_once_so_no_cook_any_more";
+    print $0;
+  }
+  else if(state == 999) {
+    print $0;
+  }
+  else {
+    if($0 ~ /jtag_i : in/) {
+      print "    gps_pps : in std_logic;";
+      print $0;
+    }
+    else if(($0 ~ / signal gps_pps /) ||
+            ($0 ~ / gps_pps <= /)) {
+      # memo: gps_pps shift signal -> input, no print
+    }
+    else { print $0; }
+  }
+}

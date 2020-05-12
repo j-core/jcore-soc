@@ -1,0 +1,210 @@
+{:target :spartan6
+ :plugins #import "../default_plugins.edn"
+ :pins {:file "../pins/turtle_1v0.pins"
+        :part "IC3"
+        :rules
+        [;; Default to LVCMOS33 for all pins and then override for
+         ;; certain pins later
+         {:match ".*" :attrs {:iostandard "LVCMOS33"}}
+
+         {:match "25mhz" :signal "clock_25" :buff false}
+
+         {:match "atmel_rst" :out 1}
+         {:match "atmel_txd" :signal "uart0_rx"}
+         {:match "atmel_rxd" :signal "uart0_tx" :attrs {:drive 8 :slew "fast"}}
+
+         ;; GPS 1V0 Turtle Hat
+         {:match "gpio9"     :signal "gps_clk"}
+         {:match "gpio10"    :signal "gps_d(0)"}
+         {:match "gpio22"    :signal "gps_d(1)"}
+         {:match "gpio7"     :out 1} ;; HW0 High gain mixer mode
+         {:match "gpio11"    :out 1} ;; HW1 High gaim LNA mode
+         {:match "gpio19"    :out 1}
+         {:match "gpio26"    :out 1}
+
+         ;; ddr pins
+         {:match "ddr_.*" :attrs {:iostandard "MOBILE_DDR"}}
+         ;; addresses
+         {:match ["ddr_a" n] :signal ["ddr_sd_ctrl.a(" n ")"]}
+         {:match ["ddr_ba" n] :signal ["ddr_sd_ctrl.ba(" n ")"]}
+         ;; clock
+         {:match "ddr_ck_[np]" :attrs {:iostandard "DIFF_MOBILE_DDR"}}
+         {:match "ddr_ck_n" :signal {:name "ddr_clk" :diff :neg}}
+         {:match "ddr_ck_p" :signal {:name "ddr_clk" :diff :pos}}
+         {:match "ddr_cke" :signal "ddr_sd_ctrl.cke"}
+         ;; control
+         {:match "ddr_cas" :signal "ddr_sd_ctrl.cas"}
+         {:match "ddr_ras" :signal "ddr_sd_ctrl.ras"}
+         {:match "ddr_we" :signal "ddr_sd_ctrl.we"}
+         ;; data
+         {:match ["ddr_dq" n]
+          :in ["dr_data_i.dqi(" n ")"]
+          :out ["dr_data_o.dqo(" n ")"]
+          :out-en ["dr_data_o.dq_outen(" n ")"]}
+         {:match "ddr_ldm"
+          :out "dr_data_o.dmo(0)"
+          :out-en "dr_data_o.dq_outen(16)"}
+         {:match "ddr_udm"
+          :out "dr_data_o.dmo(1)"
+          :out-en "dr_data_o.dq_outen(17)"}
+         {:match "ddr_ldqs"
+          :in "dr_data_i.dqsi(0)"
+          :out "dr_data_o.dqso(0)"
+          :out-en "dr_data_o.dqs_outen(0)"}
+         {:match "ddr_udqs"
+          :in "dr_data_i.dqsi(1)"
+          :out "dr_data_o.dqso(1)"
+          :out-en "dr_data_o.dqs_outen(1)"}
+
+         ;; ethernet
+         {:match "eth_[^m].*" :attrs {:drive 8 :slew "fast"}}
+         {:match "eth_clk" :signal "phy_rmii_clk"}
+         {:match "eth_crs_dv" :signal "emac_phy_crs_dv"}
+         ;; hardcode some pin outputs
+         {:match "eth_mdc" :out 0}
+         {:match "eth_mdio" :out 0}
+         {:match "eth_rxer" :signal "emac_phy_rxerr"}
+         {:match ["eth_rxd" n] :signal ["emac_phy_rxd(" n ")"]}
+         {:match "eth_txen" :signal "emac_phy_txen"}
+         {:match ["eth_txd" n] :signal ["emac_phy_txd(" n ")"]}
+         {:match "eth_rst" :out {:name "reset" :invert true}}
+
+         {:match "eth_intr" :in "eth_intr" :attrs {:pullup true}}
+
+         {:match "led.*" :attrs {:drive 24 :tig "yes"}}
+         {:match "led1" :out "po(0)"}
+         {:match "led2" :out "po(1)"}
+
+         {:match "flash_miso" :signal "flash_miso"}
+         {:match "flash_mosi" :signal "flash_mosi" :attrs {:drive 8 :slew "fast"}}
+         {:match "sd_sel" :signal "flash_cs(0)" :attrs {:drive 8 :slew "fast"}}
+         {:match "cfg_sel" :signal "flash_cs(1)" :attrs {:drive 8}}
+         {:match "flash_sclk" :signal "flash_clk" :attrs {:drive 8 :slew "fast"}}
+         {:match "sd_det" :in "sd_det" :attrs {:pullup true}}
+
+         ;; USB
+         {:match "usb_clk" :in "usb_clk"}
+         {:match "usb0_[pn]" :attrs {:iostandard "LVDS_33" :diff_term true}}
+         ;; TODO: usb0_p/n are bi-directional, so need to connect in,
+         ;; out, and out-en signals
+         {:match "usb0_p" :signal {:name "usb0_d" :diff :pos}}
+         {:match "usb0_n" :signal {:name "usb0_d" :diff :neg}}
+
+         {:match "vid_en" :out "vid_en" :attrs {:drive 24}}
+         ]}
+
+ :merge-signals
+ {"clk_sys" ["clk_cpu"]}
+
+ :expose-signals
+ {"rtc_nsec" "rtc_nsec"}
+
+ ;; Supply a zero value for a list of global signals that aren't
+ ;; output by devices in the design
+ :zero-signals
+ ["icache0_ctrl"
+  "icache1_ctrl"
+  "cache01sel_ctrl_temp"
+  "dcache0_ctrl"
+  "dcache1_ctrl"
+  "dma_dbus_o"
+  "cpu0_event_i"
+  "cpu1_event_i"
+  "debug_i"]
+
+ :system
+ {:dram [0x10000000 0x8000000]
+  :pio
+  {[0 1] {:name "led"}
+   [2 31] 0}}
+
+ :padring-entities
+ {"clkin25_clkgen" {:architecture "s6_em50"
+                    :ports {"clk_in" "clock_25"
+                            "clk_fpga_cfg" "clk_emac"
+                            "rst" 0
+                            "lock" "clock_locked0"}
+                    :generics {"CLK_CPU_DIVIDE" CFG_CLK_CPU_DIVIDE
+                               "CLK_MEM_2X_DIVIDE" CFG_CLK_MEM_2X_DIVIDE}}
+  "ddr_iocells" {:entity "ddr_phy"
+                 :configuration "ddr_phy_spartan6"
+                 :ports {"ck_p" "ddr_clk"
+                         "ck2x0" "clk_mem"
+                         "ck2x90" "clk_mem_90"}
+                 :generics {"READ_SAMPLE_TM" (freq_to_read_sample_tm CFG_CLK_MEM_FREQ_HZ)}}
+  "reset_gen" {:ports {"clock_locked1" 1}}
+  "rmii_clk_out" {:entity "clock_output"
+                  :architecture "spartan6"
+                  :ports {"clk" "emac_phy_clk"
+                          "q" "phy_rmii_clk"}}}
+
+ :top-entities
+ {"cpus" {:configuration "two_cpus_decode_rodimix_fpga"
+          :ports {"cpu0_copro_i" NULL_COPR_I
+                  "cpu1_copro_i" NULL_COPR_I
+                  "cpu1eni" 0}
+          :generics {"INSERT_WRITE_DELAY_BOOT_MEM" true
+                     "INSERT_READ_DELAY_BOOT_MEM" true
+                     "INSERT_INST_DELAY_BOOT_MEM" true}}
+  "ddr_ram_mux" {:configuration "ddr_ram_mux_two_cpu_idcache_fpga"}
+  "ddr_ctrl" {:entity "ddr_fsm"
+              :ports {"clk_2x" "clk_mem_2x"
+                      "clk" "clk_mem"
+                      "clk_90" "clk_mem_90"
+                      "fix_pinhi" 0
+                      "fix_pinlo" 0}
+              :generics {"READ_SAMPLE_TM" (freq_to_read_sample_tm CFG_CLK_MEM_FREQ_HZ)}}}
+
+ :device-classes
+ ;; {$include "../common_device_classes.edn"
+ {$include "../sei_device_classes.edn"
+  "emac" {:generics {"ASYNC_BUS_BRIDGE" false
+                     "ASYNC_BRIDGE_IMPL2" true}
+          :ports {"clk_emac" "clk_emac"}}}
+
+ :devices
+ [{:class "gpio"
+   :base-addr 0xabcd0000
+   :irq 4}
+  {$include "../aic1_cpu0.edn"
+   :generics {"rtc_sec_length34b" true}}
+  {$include "../aic1_cpu1.edn"
+   :generics {"rtc_sec_length34b" true}}
+  {:class "spi"
+   :name "flash"
+   :base-addr 0xabcd0040
+   :generics {"num_cs" 2}}
+  {:class "uartlite"
+   :name "uart0"
+   :base-addr 0xabcd0100
+   :irq 1
+   :generics {"intcfg" 1
+              "bps" 250000e0}
+   :dt-props {:current-speed (230400)
+              :port-number (0)}
+   :dt-stdout true}
+  {:class "emac"
+   :base-addr 0xabce0000
+   :irq 0
+   :generics {"c_addr_width" 11
+              "c_buswidth" 32
+              "default_mac_addr" 0
+              "ASYNC_BRIDGE_IMPL2" true
+              "INSERT_WRITE_DELAY_ETHRX" false
+              "INSERT_READ_DELAY_ETHRX" false}}
+  {:class "gpsif"
+   :generics {"GPSIF_NC" 5}
+   :ports {"bi" BIST_SCAN_NOP
+           "clk" "clk_mem_2x"
+           "bus_clk" "clk_sys"
+           "gps_clk" "gps_clk"
+           "gps_d" "gps_d"
+           ;; "dma" "gps_dmareq"
+           "blgps" NULL_BLGPS
+           "ppsdds" "phy_rmii_clk" } ; FIXME
+   :base-addr 0xabcc0000
+   :irq 2 }
+  {:class "cache_ctrl"
+   :base-addr 0xabcd00c0
+   :irq {"int0" {:cpu 0 :irq 3}
+         "int1" {:cpu 1 :irq 3 :dt? false}}}]}

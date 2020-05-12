@@ -73,9 +73,7 @@ begin
   spi : entity work.spi2
     generic map (
       NUM_CS => NUM_CS,
-      CLK_FREQ => real(1.0e9 ns / CLOCK_HALF_PERIOD) / 2.0,
-      CPOL => '0',
-      CPHA => '0')
+      CLK_FREQ => real(1.0e9 ns / CLOCK_HALF_PERIOD) / 2.0)
     port map (
       clk => clk,
       rst => rst,
@@ -84,7 +82,9 @@ begin
       spi_clk => spi_clk,
       cs => cs,
       miso => miso,
-      mosi => mosi);
+      mosi => mosi,
+      cpol => '0',
+      cpha => '0');
   process
   begin
     rst <= '1';

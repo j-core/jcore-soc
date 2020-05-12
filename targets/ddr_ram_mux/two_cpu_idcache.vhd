@@ -15,16 +15,14 @@ architecture two_cpu_idcache of ddr_ram_mux is
   signal data1_dbus_o  : cpu_data_o_t;
   signal data1_dbus_i  : cpu_data_i_t;
   signal data1_dbus_lock  : std_logic;
---  signal cpu_ddr_bus_o : cpu_data_o_t;
---  signal cpu_ddr_bus_i : cpu_data_i_t;
---  signal cpu_instr_ddr_bus_o : cpu_data_o_t;
---  signal cpu_instr_ddr_bus_i : cpu_data_i_t;
---  signal cpu_data_ddr_bus_o : cpu_data_o_t;
---  signal cpu_data_ddr_bus_i : cpu_data_i_t;
   signal instr0_ddrburst : std_logic;
   signal instr1_ddrburst : std_logic;
   signal data0_ddrburst : std_logic;
   signal data1_ddrburst : std_logic;
+  signal instr0_dbus_ack_r : std_logic;
+  signal instr1_dbus_ack_r : std_logic;
+  signal data0_dbus_ack_r : std_logic;
+  signal data1_dbus_ack_r : std_logic;
   signal cache0_snoop  : dcache_snoop_io_t;
   signal cache1_snoop  : dcache_snoop_io_t;
 begin
@@ -38,7 +36,8 @@ begin
       ibus_i => cpu0_ibus_i,
       dbus_o => instr0_dbus_o,
       dbus_ddrburst => instr0_ddrburst,
-      dbus_i => instr0_dbus_i);
+      dbus_i => instr0_dbus_i,
+      dbus_ack_r => instr0_dbus_ack_r);
 
   u_icache1 : icache_adapter
     port map (
@@ -50,7 +49,8 @@ begin
       ibus_i => cpu1_ibus_i,
       dbus_o => instr1_dbus_o,
       dbus_ddrburst => instr1_ddrburst,
-      dbus_i => instr1_dbus_i);
+      dbus_i => instr1_dbus_i,
+      dbus_ack_r => instr1_dbus_ack_r);
 
   u_dcache0 : dcache_adapter
     port map (
@@ -66,7 +66,8 @@ begin
       dbus_o    => data0_dbus_o,
       dbus_lock => data0_dbus_lock,
       dbus_ddrburst => data0_ddrburst,
-      dbus_i    => data0_dbus_i);
+      dbus_i    => data0_dbus_i,
+      dbus_ack_r    => data0_dbus_ack_r);
 
   u_dcache1 : dcache_adapter
     port map (
@@ -82,7 +83,8 @@ begin
       dbus_o    => data1_dbus_o,
       dbus_lock => data1_dbus_lock,
       dbus_ddrburst => data1_ddrburst,
-      dbus_i    => data1_dbus_i);
+      dbus_i    => data1_dbus_i,
+      dbus_ack_r    => data1_dbus_ack_r);
 
   -- mux between instruction and data and dma : three masters
   u_bmuxc : bus_mux_typec port map (
@@ -93,24 +95,29 @@ begin
   m1_ddrburst   => data0_ddrburst ,
   m1_lock       => data0_dbus_lock,
   m1_i          => data0_dbus_o   ,
+  m1_ack_r      => data0_dbus_ack_r   ,
 
   m2_o          => instr0_dbus_i  ,
   m2_ddrburst   => instr0_ddrburst ,
   m2_i          => instr0_dbus_o  ,
+  m2_ack_r      => instr0_dbus_ack_r   ,
 
   m3_o          => data1_dbus_i   ,
   m3_ddrburst   => data1_ddrburst ,
   m3_lock       => data1_dbus_lock,
   m3_i          => data1_dbus_o   ,
+  m3_ack_r      => data1_dbus_ack_r   ,
 
   m4_o          => instr1_dbus_i  ,
   m4_ddrburst   => instr1_ddrburst ,
   m4_i          => instr1_dbus_o  ,
+  m4_ack_r      => instr1_dbus_ack_r   ,
 
   m5_o          => dma_dbus_i    ,
   m5_i          => dma_dbus_o    ,
   mem_o         => ddr_bus_o     ,
   mem_ddrburst  => ddr_burst     ,
-  mem_i         => ddr_bus_i     
+  mem_i         => ddr_bus_i     ,
+  mem_ack_r     => ddr_bus_ack_r
       );
 end architecture;

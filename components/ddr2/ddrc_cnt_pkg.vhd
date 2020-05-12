@@ -1,6 +1,7 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
+use ieee.math_real.all;
 use work.cpu2j0_pack.all;
 use work.config.all;
 
@@ -18,12 +19,9 @@ constant DDR_MAX_WAIT     : natural := 2**DDR_MAX_WAIT_BIT - 1     ;  -- JustNow
 
 --   for counter  70usec, ACT-ACT , wait for all  ----
 constant DDR_CK_CYCLE    : natural := CFG_DDR_CK_CYCLE;
-constant C70_WIDTH_BITS  : natural := 14;    -- 70,000 / 5ns = 14000
 constant C14_WIDTH_BITS  : natural := 4;     -- 15cycle counter for COMMAND-COMMAND
 constant CMNC_WIDTH_BITS : natural := 4;     -- instead of 16 burst
 
-constant C70_MAX         : natural := (70000/DDR_CK_CYCLE) - 1 ;  -- this is real one
-constant C70_MAX2        : natural := 500 - 1 ;  -- CAUTION Please delete !! when real
 constant CMNC_MAX        : natural := 2**CMNC_WIDTH_BITS-1;
 constant CL_2            : natural := 2 ;
 constant CL_3            : natural := 0 ;
@@ -33,15 +31,23 @@ constant CL_4            : natural := 1 ;
 constant  tMRD           : natural := 2-1 ;  --  LOAD MODE REGISTER command cycle time ;
 constant  tRAS_min       : natural := (40+DDR_CK_CYCLE-1)/DDR_CK_CYCLE ; --  ACTIVE to PRECHARGE
 constant  tRAS_max       : natural := (70000+DDR_CK_CYCLE-1)/DDR_CK_CYCLE ; --  ACTIVE to PRECHARGE
-constant  tRC            : natural := (55+DDR_CK_CYCLE-1)/DDR_CK_CYCLE ;   -- ACT to ACT/ACT to AUTPREFRESH§
+constant  tRC            : natural := (55+DDR_CK_CYCLE-1)/DDR_CK_CYCLE ;   -- ACT to ACT/ACT to AUTPREFRESH
 constant  tRCD           : natural := (15+DDR_CK_CYCLE-1)/DDR_CK_CYCLE ;   -- ACT to READ/WRITE
-constant  tREFI          : natural := (7800+DDR_CK_CYCLE-1)/DDR_CK_CYCLE ;   -- refresh interval
+constant  tREFI          : natural := (7488+DDR_CK_CYCLE-1)/DDR_CK_CYCLE ;   -- refresh interval.
+                                       -- 7800 * 0.96 (200MHz/208MHz effect) = 7488
 constant  tRFC           : natural := (72+DDR_CK_CYCLE-1)/DDR_CK_CYCLE ;   -- refresh period
 constant  tRP            : natural := (15+DDR_CK_CYCLE-1)/DDR_CK_CYCLE ;   -- PRECHARGE PERIOD
 constant  tRRD           : natural := (10+DDR_CK_CYCLE-1)/DDR_CK_CYCLE ;   -- ACT banka to Actbank b
 constant  tWR            : natural := (15+DDR_CK_CYCLE-1)/DDR_CK_CYCLE +1 ;   -- Write recovery time
 constant  tWTR           : natural := 2-1 ;    -- cycle : internal WRITE to READ command delay
 constant  tDAL           : natural  := ((tWR+DDR_CK_CYCLE-1)/DDR_CK_CYCLE+1) + ((tRP+DDR_CK_CYCLE-1)/DDR_CK_CYCLE+1) ; ---   each round up needed
+
+constant C70_WIDTH_BITS  : natural := 11;    -- 7488 ns / 5ns = 1498.6
+constant C70_MAX         : natural := tREFI ;
+constant C70_MAX_DIV4    : natural := tREFI / 4;
+constant C70_MAX2        : natural := 500 - 1 ;  -- CAUTION: only for sim that
+                                                 -- observes many refresh
+constant REFRE_MULT_QUAT : std_logic_vector(4 downto 0) := "00110" ;
 
 type v_a_t is array(3 downto 0) of std_logic;
 type bnk_a_t   is array(3 downto 0) of std_logic_vector(27 downto 13);
@@ -124,6 +130,13 @@ type ddr_smcmd_t is record
          idle      : std_logic;
 end record;
 
+type ddr_status_o_t is record
+         status0   : std_logic_vector(7 downto 0);
+         dummy1    : std_logic;
+end record;
+
+constant NULL_DDR_STATUS : ddr_status_o_t := ( (others => '0'), '0' );
+
   type ddrc_fsm is (
      st_power_on, 
      st_wait, 
@@ -142,9 +155,10 @@ end record;
      st_WRITES, 
      st_WRITEW, 
      st_WRITEE, 
-     st_WRITEEE, 
+     st_WRITEE2, 
      st_PRECHG, 
      st_REFRESH , 
+     st_REFRESH2, 
      st_wr_wait);
 
 --   ck event --
@@ -169,6 +183,8 @@ type fsm_reg_t is record
     rack_dd : std_logic ;
     rack_ddd: std_logic ;  -- final read ack for READ_SAMPLE_TM = 2 - 6
     rack_dddd: std_logic ; -- final read ack for READ_SAMPLE_TM = 7 - 10
+    status_ddrm: std_logic_vector( 7 downto 0);
+    strd_intvl: std_logic_vector( 1 downto 0);
     eack    : std_logic;
     eack_d  : std_logic;
     v       : v_a_t ;
@@ -181,7 +197,7 @@ constant FSM_REG_RESET : fsm_reg_t := (
     			state   => st_power_on, 
                         CL_No   =>  0   ,
                         c70c    =>  0   ,
-                        c70c_zero    =>  '0'   ,
+                        c70c_zero    =>  '1'   ,
                         c14c    =>  0   ,
                         cmnc    =>  0   , 
                         cadr    =>  0   ,
@@ -198,6 +214,8 @@ constant FSM_REG_RESET : fsm_reg_t := (
 			rack_dd => '0'  ,
 			rack_ddd => '0'  ,
 			rack_dddd => '0'  ,       --debug only
+                        status_ddrm => x"04", -- Refresh milt x1 = B'100
+                        strd_intvl => "00",
     			eack    => '0'  ,
     			eack_d  => '0'  ,
 			v       => V_BNK_A_INIT    ,
@@ -287,6 +305,8 @@ component ddr_fsm
          i             : in  cpu_data_o_t;
          bst           : in  std_logic ;
          o_d           : out cpu_data_i_t ;
+         o_ack_r       : out std_logic;
+         o_st          : out ddr_status_o_t;
          fix_pinhi     : in  std_logic;
          fix_pinlo     : in  std_logic;
          s_i           : in  sd_data_o_t;
@@ -359,11 +379,34 @@ component  DDRC_PAD port (
 
 end component ;
 
+function freq_to_read_sample_tm(hz : real) return integer;
 
 end package;
 
 
 package body ddrc_cnt_pack is
 
+  function freq_to_read_sample_tm(hz : real)
+    return integer is
+    variable tm : integer := 0;
+  begin
+    if hz <= 62.5e6 then
+      tm := 2; -- 50.0 or 62.5 MHz
+    elsif hz <= 104.2e6 then
+      tm := 3; -- 83.3 MHz
+    elsif hz <= 145.8e6 then
+      tm := 4; -- 125.0 MHz
+    elsif hz <= 187.5e6 then
+      tm := 5; -- 167.7 MHz
+    elsif hz <= 229.2e6 then
+      tm := 6; -- 200.0 MHz
+    else
+      tm := 7; -- for example, 208 MHz with much delay case
+    end if;
+    assert tm /= 0
+      report "Cannot calculate ddr_fsm READ_SAMPLE_TM for " & real'image(hz) & " hz"
+      severity failure;
+    return tm;
+  end function;
 
 end ddrc_cnt_pack;

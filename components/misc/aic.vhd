@@ -11,6 +11,7 @@ entity aic is
 	c_busperiod : integer := 40;
 	-- sets the vector number sent to the CPU for each of the 8 elements of
         -- the irq_i port
+	rtc_sec_length34b : boolean := false;
 	vector_numbers : v_irq_t := (x"11", x"12", x"13", x"14", x"15", x"16", x"17", x"18")
 	);
 	port (
@@ -25,7 +26,8 @@ entity aic is
 	irq_i : in std_logic_vector(7 downto 0) := (others => '0');
 	enmi_i : in std_logic;
 	event_i : in cpu_event_o_t;
-	event_o : out cpu_event_i_t
+	event_o : out cpu_event_i_t;
+	reboot : out std_logic
 );
 end aic;
 
@@ -53,7 +55,7 @@ architecture behav of aic is
 	end component aic_edgedet;
 
 	signal reg_event, w_event, w_irqevent : std_logic_vector(24 downto 0);
-	signal  w_ack : std_logic;
+	signal  rw_ack : std_logic;
 	signal s_enmi, s_eirq, s_eirq2, s_cer, s_der, s_mrs, w_wctrl, w_enmi: std_logic;
 	signal w_cer1, w_cer2, w_cer3 : std_logic;
 	signal testvect : std_logic_vector(11 downto 0);
@@ -88,7 +90,15 @@ begin
 	get_irqs : for irr in irq_i'range generate
 		iedge_inst : aic_edgedet port map( q => q_irqs(irr), clk => clk_bus, rst => rst_i, irq => irq_i(irr), en_i => es_irqs(irr), clr_i => ec_irqs(irr));
 	end generate;
-	rtc_sec <= reg_rtc_sec;
+	rtc_bit_expand : process(reg_rtc_sec)
+	begin
+		if(rtc_sec_length34b = true) then
+			rtc_sec(63 downto 34) <= (others => '0');
+			rtc_sec(33 downto  0) <= reg_rtc_sec(33 downto 0);
+		else
+			rtc_sec <= reg_rtc_sec;
+		end if;
+	end process;
 	rtc_nsec <= reg_rtc_nsec;
 	-- For now RTC is read only
 	p_rtc : process(clk_bus, rst_i)
@@ -96,20 +106,29 @@ begin
 		if rst_i = '1' then
 			reg_rtc_sec <= (others => '0');
 			reg_rtc_nsec <= (others => '0');
+			reboot <= '0';
 		elsif rising_edge(clk_bus) then	
 			if reg_rtc_nsec >= std_logic_vector(to_unsigned(1e9, reg_rtc_nsec'length)) then
 				reg_rtc_nsec <= reg_rtc_nsec -  (1e9 - c_busperiod);	--999999960;
-				reg_rtc_sec <= reg_rtc_sec + 1;
+  			    if(rtc_sec_length34b = true) then
+				 reg_rtc_sec <= x"0000000" & "00" & 
+					(reg_rtc_sec(33 downto 0) + 1);
+			    else reg_rtc_sec <= reg_rtc_sec + 1; end if;
 			else
 				reg_rtc_nsec <= reg_rtc_nsec + c_busperiod;
 			end if;
 			if (db_i.wr and db_i.a(5)) = '1' then
 				if db_i.a(3 downto 2) = "00" then
-					reg_rtc_sec(63 downto 32) <= db_i.d;
+				   if(rtc_sec_length34b = true) then
+					reg_rtc_sec(63 downto 34) <= x"0000000" & "00";
+				   else	reg_rtc_sec(63 downto 34) <= db_i.d(31 downto 2); end if;
+					reg_rtc_sec(33 downto 32) <= db_i.d(1 downto 0);
 				elsif db_i.a(3 downto 2) = "01" then
 					reg_rtc_sec(31 downto 0) <= db_i.d;
 				elsif db_i.a(3 downto 2) = "10" then
 					reg_rtc_nsec <= db_i.d;
+				elsif db_i.a(4 downto 2) = "111" then
+					reboot <= db_i.d(0);
 				end if;
 			end if;
 		end if;
@@ -149,9 +168,10 @@ begin
 		end if;
 	end process;
 
-	db_o.ack <= '0' when db_i.en = '0' else
-		     '1' when db_i.rd = '1' else
-		     w_ack;
+     --	db_o.ack <= '0' when db_i.en = '0' else
+     --		     '1' when db_i.rd = '1' else
+     --		     w_ack;
+	db_o.ack <= rw_ack;
 
         -- Register layout for reads
         -- addr bits
@@ -180,7 +200,9 @@ begin
                     std_logic_vector(to_unsigned(c_busperiod, w_pitout'length)) when db_i.a(3) = '1' else
 		    pit_throttle when db_i.a(2) = '0' else
 		    pit_cntr;
-	w_rtcout <= reg_rtc_sec(63 downto 32) when db_i.a(3 downto 2) = "00" else
+	w_rtcout <= x"0000000" & "00" & reg_rtc_sec(33 downto 32)
+		    			      when (db_i.a(3 downto 2) = "00") and (rtc_sec_length34b = true) else
+		    reg_rtc_sec(63 downto 32) when (db_i.a(3 downto 2) = "00") else
 		    reg_rtc_sec(31 downto 0) when db_i.a(3 downto 2) = "01" else
 		    reg_rtc_nsec when db_i.a(3 downto 2) = "10" else
 		    (others => '0');
@@ -248,7 +270,7 @@ begin
 			count_enable <= '0';
 			count <= (others => '1');
 			brk_enable <= '0';
-			w_ack <= '0';
+			rw_ack <= '0';
 			r_nmi <= '0';
 			r_irq1 <= '0';
 			r_irq10 <= '0';
@@ -262,7 +284,7 @@ begin
 			ec_irqs <= (others => '1');
 			pit_flag <= '0';
 		elsif rising_edge(clk_bus) then
-			w_ack <= db_i.en;
+			rw_ack <= db_i.en and (not rw_ack);
 			if db_i.wr = '1' and db_i.a(5) = '0' then
 				if db_i.a(4) = '0' then
 					if db_i.a(3) = '0' then

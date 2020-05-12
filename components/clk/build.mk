@@ -3,6 +3,7 @@ $(VHDLS) += DCM_SP6.vhd
 $(VHDLS) += s6pll_250.vhd
 $(VHDLS) += clkin25_clkgen.vhd
 $(VHDLS) += clkin25_clkgen_s6.vhd
+$(VHDLS) += clkin25_clkgen_s6_em50.vhd
 $(VHDLS) += clkin25_clkgen_k7.vhd
 $(VHDLS) += clkin10_clkgen.vhd
 $(VHDLS) += clkin10_clkgen_s6.vhd

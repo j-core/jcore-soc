@@ -4,6 +4,7 @@ include $(TOOLS_DIR)/mk_utils.mk
 VHDS :=
 VHDLS := VHDS
 include build.mk
+VHDS += $(call include_vhdl,tech/sim)
 VHDS += $(TOOLS_DIR)/tests/tap/test_pkg.vhd
 VHDS += $(wildcard tests/*.vhd)
 

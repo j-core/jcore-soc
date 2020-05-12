@@ -3,10 +3,8 @@
 -- Clock     Freq (MHz)  (degrees)    (%)     Jitter (ps)  Error (ps)
 ------------------------------------------------------------------------------
 -- clk250      250.000      0.000      50.0      212.631    235.448
--- clk125_0    125.000      0.000      50.0      172.776    235.448
--- clk125_90   125.000     90.000      50.0      172.776    235.448
--- clk125_180  125.000    180.000      50.0      172.776    235.448
--- clk125_270  125.000    270.000      50.0      172.776    235.448
+-- clk125      125.000      0.000      50.0      172.776    235.448
+-- clk10       10.000       0.000      50.0      172.776    235.448
 -- clk_cpu 1000/CLK_CPU_DIVIDE  0.000      50.0      254.951    235.448
 --
 ------------------------------------------------------------------------------
@@ -31,10 +29,8 @@ port
   clk        : in  std_logic;
   -- Clock out ports
   clk250     : out std_logic;
-  clk125_0   : out std_logic;
-  clk125_90  : out std_logic;
-  clk125_180 : out std_logic;
-  clk125_270 : out std_logic;
+  clk125     : out std_logic;
+  clk10      : out std_logic;
   clk_cpu    : out std_logic;
   -- Status and control signals
   reset_o    : out std_logic;
@@ -91,14 +87,14 @@ begin
     CLKOUT1_DIVIDE       => 8,
     CLKOUT1_PHASE        => 0.000,
     CLKOUT1_DUTY_CYCLE   => 0.500,
-    CLKOUT2_DIVIDE       => 8,
-    CLKOUT2_PHASE        => 90.000,
+    CLKOUT2_DIVIDE       => 100,
+    CLKOUT2_PHASE        => 0.000,
     CLKOUT2_DUTY_CYCLE   => 0.500,
     CLKOUT3_DIVIDE       => 8,
-    CLKOUT3_PHASE        => 180.000,
+    CLKOUT3_PHASE        => 0.000,
     CLKOUT3_DUTY_CYCLE   => 0.500,
     CLKOUT4_DIVIDE       => 8,
-    CLKOUT4_PHASE        => 270.000,
+    CLKOUT4_PHASE        => 0.000,
     CLKOUT4_DUTY_CYCLE   => 0.500,
     CLKOUT5_DIVIDE       => CLK_CPU_DIVIDE,
     CLKOUT5_PHASE        => 0.000,
@@ -135,23 +131,13 @@ begin
 
   clkout2_buf : BUFG
   port map
-   (O   => clk125_0,
+   (O   => clk125,
     I   => clkout1);
 
   clkout3_buf : BUFG
   port map
-   (O   => clk125_90,
+   (O   => clk10,
     I   => clkout2);
-
-  clkout4_buf : BUFG
-  port map
-   (O   => clk125_180,
-    I   => clkout3);
-
-  clkout5_buf : BUFG
-  port map
-   (O   => clk125_270,
-    I   => clkout4);
 
   clkout6_buf : BUFG
   port map

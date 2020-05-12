@@ -85,22 +85,34 @@ entity pad_ring is
         pin_sevensegmentenable1 : out std_logic;
         pin_sevensegmentenable2 : out std_logic;
         pin_spi_cs : out std_logic;
+        pin_spi_sclk : out std_logic;
+        pin_spi_sdi : out std_logic;
+        pin_spi_sdo : in std_logic;
         pin_uart_rx : out std_logic;
         pin_uart_tx : in std_logic
     );
 end;
 architecture impl of pad_ring is
     attribute loc : string;
+    attribute tig : string;
     -- Pin attributes
     attribute loc of pin_clk_100mhz          : signal is "v10";
     attribute loc of pin_led0                : signal is "t18";
+    attribute tig of pin_led0                : signal is "yes";
     attribute loc of pin_led1                : signal is "t17";
+    attribute tig of pin_led1                : signal is "yes";
     attribute loc of pin_led2                : signal is "u18";
+    attribute tig of pin_led2                : signal is "yes";
     attribute loc of pin_led3                : signal is "u17";
+    attribute tig of pin_led3                : signal is "yes";
     attribute loc of pin_led4                : signal is "n16";
+    attribute tig of pin_led4                : signal is "yes";
     attribute loc of pin_led5                : signal is "n15";
+    attribute tig of pin_led5                : signal is "yes";
     attribute loc of pin_led6                : signal is "p16";
+    attribute tig of pin_led6                : signal is "yes";
     attribute loc of pin_led7                : signal is "p15";
+    attribute tig of pin_led7                : signal is "yes";
     attribute loc of pin_mcb3_dram_a0        : signal is "j7";
     attribute loc of pin_mcb3_dram_a1        : signal is "j6";
     attribute loc of pin_mcb3_dram_a10       : signal is "f4";
@@ -147,19 +159,31 @@ architecture impl of pad_ring is
     attribute loc of pin_sd_miso             : signal is "k14";
     attribute loc of pin_sd_mosi             : signal is "g16";
     attribute loc of pin_sevensegment0       : signal is "a5";
+    attribute tig of pin_sevensegment0       : signal is "yes";
     attribute loc of pin_sevensegment1       : signal is "c6";
+    attribute tig of pin_sevensegment1       : signal is "yes";
     attribute loc of pin_sevensegment2       : signal is "d6";
+    attribute tig of pin_sevensegment2       : signal is "yes";
     attribute loc of pin_sevensegment3       : signal is "c5";
+    attribute tig of pin_sevensegment3       : signal is "yes";
     attribute loc of pin_sevensegment4       : signal is "c4";
+    attribute tig of pin_sevensegment4       : signal is "yes";
     attribute loc of pin_sevensegment5       : signal is "a4";
+    attribute tig of pin_sevensegment5       : signal is "yes";
     attribute loc of pin_sevensegment6       : signal is "b4";
+    attribute tig of pin_sevensegment6       : signal is "yes";
     attribute loc of pin_sevensegment7       : signal is "a3";
+    attribute tig of pin_sevensegment7       : signal is "yes";
     attribute loc of pin_sevensegmentenable0 : signal is "b2";
     attribute loc of pin_sevensegmentenable1 : signal is "a2";
     attribute loc of pin_sevensegmentenable2 : signal is "b3";
     attribute loc of pin_spi_cs              : signal is "v3";
+    attribute loc of pin_spi_sclk            : signal is "r15";
+    attribute loc of pin_spi_sdi             : signal is "t13";
+    attribute loc of pin_spi_sdo             : signal is "r13";
     attribute loc of pin_uart_rx             : signal is "b8";
     attribute loc of pin_uart_tx             : signal is "a8";
+    signal clk10 : std_logic;
     signal clk_100mhz : std_logic;
     signal clk_sys : std_logic;
     signal clk_sys_2x : std_logic;
@@ -182,11 +206,16 @@ architecture impl of pad_ring is
     signal pll_rst : std_logic;
     signal po : std_logic_vector(31 downto 0);
     signal reset : std_logic;
+    signal sd_miso : std_logic;
+    signal sd_mosi : std_logic;
+    signal spi_miso : std_logic;
+    signal spi_mosi : std_logic;
     signal uart0_rx : std_logic;
     signal uart0_tx : std_logic;
 begin
     soc : entity work.soc(impl)
         port map (
+            clk10 => clk10,
             clk_sys => clk_sys,
             clk_sys_2x => clk_sys_2x,
             clk_sys_90 => clk_sys_90,
@@ -204,6 +233,9 @@ begin
             uart0_tx => uart0_tx
         );
     ddr_clkgen : entity work.ddr_clkgen(interface)
+        generic map (
+            clk_i_period => CFG_CLK_CPU_PERIOD_NS
+        )
         port map (
             clk0_o => clk_sys,
             clk125_o => open,
@@ -216,7 +248,7 @@ begin
         );
     ddr_iocells : configuration work.ddr_phy_spartan6
         generic map (
-            read_sample_tm => CFG_DDR_READ_SAMPLE_TM
+            read_sample_tm => freq_to_read_sample_tm(CFG_CLK_MEM_FREQ_HZ)
         )
         port map (
             ck2x0 => clk_sys,
@@ -237,10 +269,8 @@ begin
         )
         port map (
             clk => clk_100mhz,
-            clk125_0 => open,
-            clk125_180 => open,
-            clk125_270 => open,
-            clk125_90 => open,
+            clk10 => clk10,
+            clk125 => open,
             clk250 => open,
             clk_cpu => clkgen_i,
             locked => open,
@@ -251,6 +281,16 @@ begin
             clock_locked0 => clock_locked0,
             clock_locked1 => '1',
             reset => reset
+        );
+    spi_merge : entity work.spi_merge(arch)
+        port map (
+            cs => flash_cs,
+            miso1 => sd_miso,
+            miso2 => spi_miso,
+            miso_merge => flash_miso,
+            mosi1 => sd_mosi,
+            mosi2 => spi_mosi,
+            mosi_merge => flash_mosi
         );
     -- led
     pi(0) <= po(0);
@@ -306,9 +346,8 @@ begin
     clk_100mhz <= pin_clk_100mhz;
     obuf_led0 : OBUF
         generic map (
-            DRIVE => 8,
-            IOSTANDARD => "LVCMOS33",
-            SLEW => "fast"
+            DRIVE => 24,
+            IOSTANDARD => "LVCMOS33"
         )
         port map (
             I => po(0),
@@ -316,9 +355,8 @@ begin
         );
     obuf_led1 : OBUF
         generic map (
-            DRIVE => 8,
-            IOSTANDARD => "LVCMOS33",
-            SLEW => "fast"
+            DRIVE => 24,
+            IOSTANDARD => "LVCMOS33"
         )
         port map (
             I => po(1),
@@ -326,9 +364,8 @@ begin
         );
     obuf_led2 : OBUF
         generic map (
-            DRIVE => 8,
-            IOSTANDARD => "LVCMOS33",
-            SLEW => "fast"
+            DRIVE => 24,
+            IOSTANDARD => "LVCMOS33"
         )
         port map (
             I => po(2),
@@ -336,9 +373,8 @@ begin
         );
     obuf_led3 : OBUF
         generic map (
-            DRIVE => 8,
-            IOSTANDARD => "LVCMOS33",
-            SLEW => "fast"
+            DRIVE => 24,
+            IOSTANDARD => "LVCMOS33"
         )
         port map (
             I => po(3),
@@ -346,9 +382,8 @@ begin
         );
     obuf_led4 : OBUF
         generic map (
-            DRIVE => 8,
-            IOSTANDARD => "LVCMOS33",
-            SLEW => "fast"
+            DRIVE => 24,
+            IOSTANDARD => "LVCMOS33"
         )
         port map (
             I => po(4),
@@ -356,9 +391,8 @@ begin
         );
     obuf_led5 : OBUF
         generic map (
-            DRIVE => 8,
-            IOSTANDARD => "LVCMOS33",
-            SLEW => "fast"
+            DRIVE => 24,
+            IOSTANDARD => "LVCMOS33"
         )
         port map (
             I => po(5),
@@ -366,9 +400,8 @@ begin
         );
     obuf_led6 : OBUF
         generic map (
-            DRIVE => 8,
-            IOSTANDARD => "LVCMOS33",
-            SLEW => "fast"
+            DRIVE => 24,
+            IOSTANDARD => "LVCMOS33"
         )
         port map (
             I => po(6),
@@ -376,9 +409,8 @@ begin
         );
     obuf_led7 : OBUF
         generic map (
-            DRIVE => 8,
-            IOSTANDARD => "LVCMOS33",
-            SLEW => "fast"
+            DRIVE => 24,
+            IOSTANDARD => "LVCMOS33"
         )
         port map (
             I => po(7),
@@ -760,7 +792,7 @@ begin
         )
         port map (
             I => pin_sd_miso,
-            O => flash_miso
+            O => sd_miso
         );
     obuf_sd_mosi : OBUF
         generic map (
@@ -769,14 +801,13 @@ begin
             SLEW => "fast"
         )
         port map (
-            I => flash_mosi,
+            I => sd_mosi,
             O => pin_sd_mosi
         );
     obuf_sevensegment0 : OBUF
         generic map (
             DRIVE => 8,
-            IOSTANDARD => "LVCMOS33",
-            SLEW => "fast"
+            IOSTANDARD => "LVCMOS33"
         )
         port map (
             I => po(8),
@@ -785,8 +816,7 @@ begin
     obuf_sevensegment1 : OBUF
         generic map (
             DRIVE => 8,
-            IOSTANDARD => "LVCMOS33",
-            SLEW => "fast"
+            IOSTANDARD => "LVCMOS33"
         )
         port map (
             I => po(9),
@@ -795,8 +825,7 @@ begin
     obuf_sevensegment2 : OBUF
         generic map (
             DRIVE => 8,
-            IOSTANDARD => "LVCMOS33",
-            SLEW => "fast"
+            IOSTANDARD => "LVCMOS33"
         )
         port map (
             I => po(10),
@@ -805,8 +834,7 @@ begin
     obuf_sevensegment3 : OBUF
         generic map (
             DRIVE => 8,
-            IOSTANDARD => "LVCMOS33",
-            SLEW => "fast"
+            IOSTANDARD => "LVCMOS33"
         )
         port map (
             I => po(11),
@@ -815,8 +843,7 @@ begin
     obuf_sevensegment4 : OBUF
         generic map (
             DRIVE => 8,
-            IOSTANDARD => "LVCMOS33",
-            SLEW => "fast"
+            IOSTANDARD => "LVCMOS33"
         )
         port map (
             I => po(12),
@@ -825,8 +852,7 @@ begin
     obuf_sevensegment5 : OBUF
         generic map (
             DRIVE => 8,
-            IOSTANDARD => "LVCMOS33",
-            SLEW => "fast"
+            IOSTANDARD => "LVCMOS33"
         )
         port map (
             I => po(13),
@@ -835,8 +861,7 @@ begin
     obuf_sevensegment6 : OBUF
         generic map (
             DRIVE => 8,
-            IOSTANDARD => "LVCMOS33",
-            SLEW => "fast"
+            IOSTANDARD => "LVCMOS33"
         )
         port map (
             I => po(14),
@@ -845,8 +870,7 @@ begin
     obuf_sevensegment7 : OBUF
         generic map (
             DRIVE => 8,
-            IOSTANDARD => "LVCMOS33",
-            SLEW => "fast"
+            IOSTANDARD => "LVCMOS33"
         )
         port map (
             I => po(15),
@@ -878,13 +902,39 @@ begin
         );
     obuf_spi_cs : OBUF
         generic map (
+            IOSTANDARD => "LVCMOS33"
+        )
+        port map (
+            I => flash_cs(1),
+            O => pin_spi_cs
+        );
+    obuf_spi_sclk : OBUF
+        generic map (
             DRIVE => 8,
             IOSTANDARD => "LVCMOS33",
             SLEW => "fast"
         )
         port map (
-            I => '1',
-            O => pin_spi_cs
+            I => flash_clk,
+            O => pin_spi_sclk
+        );
+    obuf_spi_sdi : OBUF
+        generic map (
+            DRIVE => 8,
+            IOSTANDARD => "LVCMOS33",
+            SLEW => "fast"
+        )
+        port map (
+            I => spi_mosi,
+            O => pin_spi_sdi
+        );
+    ibuf_spi_sdo : IBUF
+        generic map (
+            IOSTANDARD => "LVCMOS33"
+        )
+        port map (
+            I => pin_spi_sdo,
+            O => spi_miso
         );
     obuf_uart_rx : OBUF
         generic map (

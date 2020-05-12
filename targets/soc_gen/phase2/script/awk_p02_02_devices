@@ -1,0 +1,310 @@
+BEGIN{
+  count_byte_device = 0;
+  count_word_lb_device = 0;
+  count_word_norm_device = 0;
+  cpu_numconfig = "0";
+  entity_byte = 0;
+  state = -1;
+  byte_dma_hit = 0;
+  include_dma = 0;
+}
+{
+  if     ($1 == "#bus_byte") {
+    byte_device[count_byte_device] = $2;
+    byte_device_instname[count_byte_device] = tolower($2);
+    sub ( "dev_", "",
+    byte_device_instname[count_byte_device]);
+    count_byte_device++;
+    if($2 == "DEV_DMA") {
+      byte_dma_hit = 1;
+    }
+  }
+  else if($1 == "#bus_wordloopbackack") {
+    word_lb_device[count_word_lb_device] = $2;
+    count_word_lb_device++;
+  }
+  else if($1 == "#bus_word") {
+    word_norm_device[count_word_norm_device] = $2;
+    count_word_norm_device++;
+  }
+  else if(state == -1) {
+    if($1 ~ /--/) {
+      print $0;
+      state = 0;
+      first_comment_line = $0;
+    }
+    else {
+      # memo: vhd_head_not_arriving_no_print
+    }
+  }
+  else {
+    # memo: from here pase devices.vhd
+    if(($1 ~ /^--/) && ($0 ~ /soc_gen.$/)) {
+      print $0;
+      print first_comment_line;
+      print "-- byte bus post-processing script (script Apr/2017) --";
+    }
+    else if(($1 == "clk_sys") && ($2 == ":") &&
+            (count_byte_device > 0)) {
+      print $0;
+      print "        clk_sys_0_5x : in std_logic;";
+      # memo: soc.vhd pad_ring.vhd 0_5x add-or-not is controlled by top shell
+    }
+    else if(($1 == "dma_dbus_i") && ($2 == ":")) {
+      print $0;
+      include_dma = 1;
+    }
+    else if(($1 == "signal") && ($2 == "cpu01_periph_dbus_o")) {
+      print $0;
+      cpu_numconfig = "01";
+    }
+    else if (($1 == "signal") && ($2 == "dmac_periph_dbus_o")) {
+      print $0;
+      print "    signal dmac_periphlo_dbus_i : cpu_data_i_t;";
+      print "    signal dmac_periphlo_dbus_o : cpu_data_o_t;";
+    }
+    else if (($1 == "signal") && ($2 == "cpudm_periph_dbus_o") &&
+             (count_byte_device > 0)) {
+      print $0;
+      print "    signal cpudm_periph_bytedbus_i : cpu_data_i_t;";
+      print "    signal cpudm_periph_bytedbus_o : cpu_data_o_t;";
+      print "    signal cpudm_periph_bytetbus_i : cpu_data_i_t;";
+      print "    signal cpudm_periph_bytetbus_o : cpu_data_o_t;";
+      print "    signal cpudm_periph_adbus_i : cpu_data_i_t;";
+      print "    signal cpudm_periph_adbus_o : cpu_data_o_t;";
+      print "    signal dmac_route_byte : std_logic;";
+      printf( "    signal cpu%s_route_byte : std_logic;\n", cpu_numconfig);
+      print "    signal periph_word_bus_en : std_logic;";
+      print "    signal periph_byte_bus_en : std_logic;";
+    }
+    else if (($1 == "signal") && ($2 == "active_dev") &&
+             (count_byte_device > 0)) {
+      print $0;
+      print "    signal active_bytedev : device_t;";
+    }
+    else if (($1 == "signal") && ($2 == "devs_bus_o") &&
+             (count_byte_device > 0)) {
+      print $0;
+      print "    signal devs_bytebus_i : data_bus_i_t;";
+      print "    signal devs_bytebus_o : data_bus_o_t;";
+    }
+    else if ($1 == "function") {
+      print $0;
+      state = 1;
+    }
+    else if ((state == 1) && ($1 == "end;") &&
+             (count_byte_device > 0)) {
+      print $0;
+      print "";
+      printf("    function address_byte_route ");
+      print "( addr : std_logic_vector(31 downto 0))";
+      print "      return std_logic is";
+      print "    begin";
+      print "      if( ";
+      for (i = 0; i < count_byte_device; i++) {
+        if(i == (count_byte_device - 1)) {
+          print "          (decode_address(addr) =", byte_device[i], 
+                ") ) then";
+        } else {
+          print "          (decode_address(addr) =", byte_device[i], ") or";
+        }
+      }
+      print "           return '1';";
+      print "      else return '0'; end if;";
+      print "    end address_byte_route;";
+    }
+    else if(($4 == "work.multi_master_bus_mux(a)") &&
+            (include_dma == 0)) {
+      # memo: no dma config, change from mux to muxff to improve delay
+      # memo: no dma config, and (count_byte_device > 0) is not prepaed yet.
+      print "   ", $1, $2, $3, "work.multi_master_bus_muxff(a)";
+    }
+    else if(($4 == "work.multi_master_bus_muxff(a)")  &&
+            (count_byte_device > 0)) {
+      print "   ", $1, $2, $3, "work.multi_master_bus_muxffwbs(for_dualbus)";
+      state = 2;
+    }
+    else if((state == 2) && ($1 == "slave_i") &&
+            (count_byte_device > 0)) {
+      print "            slave_i => cpudm_periph_adbus_i,";
+    }
+    else if((state == 2) && ($1 == "slave_o") &&
+            (count_byte_device > 0)) {
+      print "            slave_o => cpudm_periph_adbus_o,";
+      printf( "            m1_route_byte => cpu%s_route_byte,\n",
+              cpu_numconfig);
+      print "            m2_route_byte => dmac_route_byte,";
+      print "            slave_wordbus_en => periph_word_bus_en,";
+      print "            slave_bytebus_en => periph_byte_bus_en";
+      print "        );"
+      print "";
+      printf( "    cpu%s_route_byte <= address_byte_route ", cpu_numconfig);
+      printf( "(cpu%s_periph_dbus_o.a);\n",                  cpu_numconfig);
+      printf( "    dmac_route_byte  <= ");
+      print "address_byte_route (dmac_periph_dbus_o.a);";
+      print "";
+      print "    split_bybussz : process (";
+      print "        cpudm_periph_adbus_o,";
+      print "        periph_byte_bus_en,";
+      print "        cpudm_periph_bytetbus_i,";
+      print "        cpudm_periph_dbus_i)";
+      print "    begin";
+      print "      if (periph_byte_bus_en = '1') then";
+      print "           cpudm_periph_adbus_i <= cpudm_periph_bytetbus_i ;";
+      print "      else cpudm_periph_adbus_i <= cpudm_periph_dbus_i ;";
+      print "      end if;";
+      print "    end process;";
+      print "    cpudm_periph_bytetbus_o <= mask_data_o(cpudm_periph_adbus_o,";
+      printf( "%48s periph_byte_bus_en);\n", "");
+      print "    cpudm_periph_dbus_o     <= mask_data_o(cpudm_periph_adbus_o,";
+      printf( "%48s periph_word_bus_en);\n", "");
+      print "";
+      print "    bussizem : entity work.bussizem(rtl)";
+      print "        port map (";
+      print "            rst      => reset,";
+      print "            clk      => clk_sys,";
+      print "            clk_half => clk_sys_0_5x ,";
+      print "            db_a_o => cpudm_periph_bytetbus_o ,";
+      print "            db_a_i => cpudm_periph_bytetbus_i ,";
+      print "            db_b_o => cpudm_periph_bytedbus_o ,";
+      print "            db_b_i => cpudm_periph_bytedbus_i";
+      state = 3;
+    }
+    else if((($1 == "cpudm_periph_dbus_i") ||
+             ($1 == "cpu01_periph_dbus_i")) && ($2 == "<=")) {
+      printf( "    %s.d <= devs_bus_i(active_dev).d;\n", $1);
+      print "";
+      print "    word_ack_gen : entity work.word_ack_gen ( impl )";
+      print "      port map (";
+      tmp_dbus_o = $1;
+      sub("_i", "_o", tmp_dbus_o);
+      printf( "        adr                  => %s.a,\n" , tmp_dbus_o);
+      printf( "        word_bus_en          => %s.en,\n", tmp_dbus_o);
+      for (i = 0; i < count_word_norm_device; i++) {
+        word_ack_gen_port_name = tolower(word_norm_device[i]);
+        sub("dev", "ack_thru_in", word_ack_gen_port_name);
+        printf( "        %-20s => devs_bus_i(%s).ack,\n",
+        word_ack_gen_port_name, word_norm_device[i]);
+      }
+      printf( "        word_ack             => %s.ack\n", $1);
+      print "    );";
+    }
+    else if(($3 == "loopback_bus(devs_bus_o(NONE));") &&
+            (count_byte_device > 0)) {
+      print $0;
+      print "";
+      print "    -- byte bus --";
+      print "    active_bytedev <= decode_address(cpudm_periph_bytedbus_o.a);";
+      print "    cpudm_periph_bytedbus_i <= devs_bytebus_i(active_bytedev);";
+      printf( "    bus_split_byte :");
+      print               "for dev in device_t'left to device_t'right generate";
+      printf( "%7s devs_bytebus_o(dev) <= mask_data_o(cpudm_periph_bytedbus_o,",
+              ""); print "";
+      printf( "%7s to_bit(dev = active_bytedev));\n", "");
+      print "    end generate;";
+      print "";
+      print "    -- loopback_bus for byte bus";
+      print "            devs_bytebus_i(NONE) <= loopback_bus(";
+      print "            devs_bytebus_o(NONE));";
+      for(i = 0;     i < count_word_lb_device; i++) {
+        printf( "%11s devs_bytebus_i(%s) <= loopback_bus(\n",
+                                               "", word_lb_device[i]);
+        printf( "%11s devs_bytebus_o(%s));\n", "", word_lb_device[i]);
+      }
+      for(i = 0; i < count_word_norm_device; i++) {
+        printf( "%11s devs_bytebus_i(%s) <= loopback_bus(\n",
+                                               "", word_norm_device[i]);
+        printf( "%11s devs_bytebus_o(%s));\n", "", word_norm_device[i]);
+      }
+      print "";
+      print "    -- loopback_bus for word bus (other than NONE)";
+      for(i = 0;     i < count_byte_device; i++) {
+        printf( "%11s devs_bus_i(%s) <= loopback_bus(\n",
+                                           "", byte_device[i]);
+        printf( "%11s devs_bus_o(%s));\n", "", byte_device[i]);
+      }
+      state = 4;
+    }
+    else if(($3 == "loopback_bus(devs_bus_o(NONE));") &&
+            (count_byte_device == 0)) {
+      print $0;
+      state = 4;
+    }
+    else if ((state == 4) && ($1 == "dma") && ($3 == "configuration") &&
+             (count_byte_device > 0)) {
+      if(byte_dma_hit == 1) {
+        print "    dma : entity work.dma_db_slave_process(bytebus)";
+        entity_byte = 1;
+        state = 5;
+      }
+      else {
+        print $0;
+        entity_byte = 0;
+      }
+    }
+    else if ((state == 4) &&
+             (($3 == "configuration") || ($3 == "entity"))) {
+      match_enti = 0;
+      for(i = 0; i < count_byte_device; i++) {
+        if($1 == byte_device_instname[i]) {
+          entity_byte = 1;
+          entity_byte_number = i;
+          call_entity_name = $4; 
+          sub ("#E#.*$", "_slave_process(bytebus)", call_entity_name);
+          match_enti = 1;
+          print "   ", $1, $2, $3, call_entity_name;
+        }
+      }
+      if(match_enti == 0) {
+        entity_byte = 0;
+        call_entity_name = $4; 
+        sub ("#E#", "(", call_entity_name);
+        print "   ", $1, $2, $3, call_entity_name;
+      }
+    }
+    else if(((state == 4) || (state == 5)) &&
+            ($3 ~ /^devs_bus_[io]/) &&
+            (entity_byte == 1) &&
+            (count_byte_device > 0)) {
+      devs_signal_name = $3;
+      sub ("devs_bus_", "devs_bytebus_", devs_signal_name);
+      print "           ", $1, $2, devs_signal_name;
+    }
+    else if(((state == 4) || (state == 5)) &&
+            ($3 == "clk_sys,") &&
+            (entity_byte == 1) &&
+            (count_byte_device > 0)) {
+      print $0;
+      print "            clk_0_5x => clk_sys_0_5x,";
+    }
+    else if((state == 5) && ($1 ~ /db_peri_[io]/) &&
+            (count_byte_device > 0)) {
+      devs_signal_name = $3;
+      sub ("dmac_periph", "dmac_periphlo", devs_signal_name);
+      print "           ", $1, $2, devs_signal_name;
+      
+    }
+    else if ((state == 5) && ($1 == ");") &&
+             (count_byte_device > 0)) {
+      print $0;
+      print "";
+      print "    dma_peri_one_delay: entity work.data_bus_delay (rtl)";
+      print "        generic map (";
+      print "            INSERT_WRITE_DELAY => true,";
+      print "            INSERT_READ_DELAY  => true";
+      print "        )";
+      print "        port map (";
+      print "            clk => clk_sys,";
+      print "            rst => reset,";
+      print "            master_o => dmac_periphlo_dbus_o,";
+      print "            master_i => dmac_periphlo_dbus_i,";
+      print "            slave_o =>  dmac_periph_dbus_o,";
+      print "            slave_i =>  dmac_periph_dbus_i";
+      print "        );";
+      state = 4;
+    }
+    else {
+      print $0;
+    }
+  }
+}

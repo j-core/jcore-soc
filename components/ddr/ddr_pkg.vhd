@@ -55,12 +55,24 @@ component ddr_ctrl is
          reset_in      : in std_logic;
          db_i          : in cpu_data_o_t;
          db_o          : out cpu_data_i_t;
+         dbo_ack_r     : out std_logic;
          sd_data_o     : out sd_data_i_t;
          sd_data_i     : in  sd_data_o_t;
          sd_ctrl       : out sd_ctrl_t);
 end component;
 
 component ddr_iocells
+    port(ddr_clk0   : in std_logic;
+         ddr_clk90  : in std_logic;
+         reset      : in std_logic;
+         dr_data_i  : in  dr_data_i_t;
+         dr_data_o  : out dr_data_o_t;
+         sd_data_i  : in  sd_data_i_t;
+         sd_data_o  : out sd_data_o_t;
+         ckpo       : out std_logic);
+end component;
+
+component ddr_iocells_k7
     port(ddr_clk0   : in std_logic;
          ddr_clk90  : in std_logic;
          reset      : in std_logic;

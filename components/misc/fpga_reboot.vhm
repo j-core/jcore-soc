@@ -1,0 +1,214 @@
+-- Entity to cause the fpga to configure itself from flash again
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+library unisim;
+use unisim.vcomponents.all;
+
+entity fpga_reboot is
+  generic (
+    RESYNC_EN : boolean := false);
+  port (
+    clk : in std_logic;
+    rst : in std_logic;
+    en  : in std_logic);
+
+  -- The order of bits in documented commands and the bits in the CAP entity
+  -- data ports is strange. Each byte is reversed. See "SelectMAP Data
+  -- Ordering" in UG380 http://www.xilinx.com/support/documentation/user_guides/ug380.pdf
+  function reorderdata(data : std_logic_vector(7 downto 0))
+    return std_logic_vector is
+    variable pins : std_logic_vector(7 downto 0);
+  begin
+    pins( 7) := data( 0);
+    pins( 6) := data( 1);
+    pins( 5) := data( 2);
+    pins( 4) := data( 3);
+
+    pins( 3) := data( 4);
+    pins( 2) := data( 5);
+    pins( 1) := data( 6);
+    pins( 0) := data( 7);
+    return pins;
+  end function;
+end entity;
+
+architecture s6 of fpga_reboot is
+  type step_t is record
+    ce : std_logic;
+    write : std_logic;
+    d : std_logic_vector(15 downto 0);
+  end record;
+
+  type steps_t is array (integer range <>) of step_t;
+
+  constant idle_step : step_t := ('1', '1', x"FFFF");
+  constant reboot_steps : steps_t(0 to 8) := (
+    idle_step,
+    ('0', '0', x"AA99"), -- Sync Word
+    ('0', '0', x"5566"), -- Sync Word
+    ('0', '0', x"30A1"), -- Type 1 Write 1 Word to CMD
+    ('0', '0', x"000E"), -- IPROG Command
+    ('0', '0', x"2000"), -- Type 1 NO OP
+    ('0', '0', x"2000"), -- Type 1 NO OP
+    ('0', '0', x"2000"), -- Type 1 NO OP
+    ('0', '0', x"2000"));-- Type 1 NO OP
+
+  type reg_t is record
+    state : integer range 0 to 8;
+    step : step_t;
+  end record;
+
+  constant REG_RESET : reg_t := (
+    state => 0,
+    step => idle_step);
+
+  signal en2 : std_logic;
+
+  register variable this : reg_t reset := REG_RESET;
+begin
+
+  g: if RESYNC_EN generate
+    sync : entity work.sync2ff
+      port map (
+        clk => clk,
+        reset => rst,
+        sin => en,
+        sout => en2);
+  end generate;
+  ng: if not RESYNC_EN generate
+    en2 <= en;
+  end generate;
+
+  p : process(this, en2)
+    register this when clk = '1' and clk'event reset when rst = '1';
+  begin
+    this.step := reboot_steps(this.state);
+    this.step.d := reorderdata(this.step.d(15 downto 8)) & reorderdata(this.step.d(7 downto 0));
+
+    if this.state = 8 then
+      this.state := 0;
+    elsif this.state /= 0 or (this.state = 0 and en = '1') then
+      this.state := this.state + 1;
+    end if;
+  end process;
+
+  icap : ICAP_SPARTAN6
+    port map (
+      clk => clk,
+      ce => this'register.step.ce,
+      busy => open,
+      o => open,
+      i => this'register.step.d,
+      write => this'register.step.write);
+end architecture;
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+library unisim;
+use unisim.vcomponents.all;
+
+entity fpga_reboot is
+  generic (
+    RESYNC_EN : boolean := false);
+  port (
+    clk : in std_logic;
+    rst : in std_logic;
+    en  : in std_logic);
+
+  -- The order of bits in documented commands and the bits in the CAP entity
+  -- data ports is strange. Each byte is reversed. See "SelectMAP Data
+  -- Ordering" in UG380 http://www.xilinx.com/support/documentation/user_guides/ug380.pdf
+  function reorderdata(data : std_logic_vector(7 downto 0))
+    return std_logic_vector is
+    variable pins : std_logic_vector(7 downto 0);
+  begin
+    pins( 7) := data( 0);
+    pins( 6) := data( 1);
+    pins( 5) := data( 2);
+    pins( 4) := data( 3);
+
+    pins( 3) := data( 4);
+    pins( 2) := data( 5);
+    pins( 1) := data( 6);
+    pins( 0) := data( 7);
+    return pins;
+  end function;
+end entity;
+
+architecture k7 of fpga_reboot is
+  type step_t is record
+    ce : std_logic;
+    write : std_logic;
+    d : std_logic_vector(31 downto 0);
+  end record;
+
+  type steps_t is array (integer range <>) of step_t;
+
+  constant idle_step : step_t := ('1', '1', x"FFFFFFFF");
+  constant reboot_steps : steps_t(0 to 8) := (
+    idle_step,
+    ('0', '0', x"AA995566"), -- Sync Word
+    ('0', '0', x"20000000"), -- Type 1 NO OP
+    ('0', '0', x"30020001"), -- Type 1 Write 1 Word to WBSTAR
+    ('0', '0', x"00000000"), -- Addr
+    ('0', '0', x"30008001"), -- Type 1 Write 1 Word to CMD
+    ('0', '0', x"0000000F"), -- IPROG
+    ('0', '0', x"20000000"), -- Type 1 NO OP
+    ('0', '0', x"20000000"));-- Type 1 NO OP
+
+  type reg_t is record
+    state : integer range 0 to 8;
+    step : step_t;
+  end record;
+
+  constant REG_RESET : reg_t := (
+    state => 0,
+    step => idle_step);
+
+  signal en2 : std_logic;
+
+  register variable this : reg_t reset := REG_RESET;
+begin
+
+  g: if RESYNC_EN generate
+    sync : entity work.sync2ff
+      port map (
+        clk => clk,
+        reset => rst,
+        sin => en,
+        sout => en2);
+  end generate;
+  ng: if not RESYNC_EN generate
+    en2 <= en;
+  end generate;
+
+  p : process(this, en2)
+    register this when clk = '1' and clk'event reset when rst = '1';
+  begin
+    this.step := reboot_steps(this.state);
+    this.step.d := reorderdata(this.step.d(31 downto 24)) & reorderdata(this.step.d(23 downto 16)) &
+                   reorderdata(this.step.d(15 downto  8)) & reorderdata(this.step.d( 7 downto  0));
+
+    if this.state = 8 then
+      this.state := 0;
+    elsif this.state /= 0 or (this.state = 0 and en = '1') then
+      this.state := this.state + 1;
+    end if;
+  end process;
+
+  icap : ICAPE2
+    generic map (
+      ICAP_WIDTH => "X32"
+    )
+    port map (
+      clk => clk,
+      csib => this'register.step.ce,
+      o => open,
+      i => this'register.step.d,
+      rdwrb => this'register.step.write);
+end architecture;

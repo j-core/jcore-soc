@@ -12,9 +12,6 @@
 
          {:match "uart_tx" :signal "uart0_rx"}
          {:match "uart_rx" :signal "uart0_tx" :attrs {:drive 8 :slew "fast"}}
-         {:match "spi_.*" :attrs {:drive 8 :slew "fast"}}
-         ;; never select on board flash
-         {:match "spi_cs" :out 1}
 
          ;; ddr pins
          {:match "mcb3_dram_.*" :attrs {:iostandard "MOBILE_DDR"}}
@@ -52,14 +49,19 @@
 
          {:match ["dpswitch" n] :attrs {:pullup true}}
          {:match ["switch" n] :attrs {:pullup true}}
-         {:match ["led" n] :attrs {:drive 8 :slew "fast"} :out ["po(" n ")"]}
+         {:match ["led" n] :attrs {:drive 24 :tig "yes"} :out ["po(" n ")"]}
 
-         {:match "sd_miso" :signal "flash_miso"}
-         {:match "sd_mosi" :signal "flash_mosi" :attrs {:drive 8 :slew "fast"}}
+         {:match "sd_miso" :signal true}
+         {:match "sd_mosi" :signal true :attrs {:drive 8 :slew "fast"}}
          {:match "sd_cs" :signal "flash_cs(0)" :attrs {:drive 8 :slew "fast"}}
          {:match "sd_clk" :signal "flash_clk" :attrs {:drive 8 :slew "fast"}}
 
-         {:match ["sevensegment" n] :attrs {:drive 8 :slew "fast"}}
+         {:match "spi_sdo" :signal "spi_miso"}
+         {:match "spi_sdi" :signal "spi_mosi" :attrs {:drive 8 :slew "fast"}}
+         {:match "spi_cs" :signal "flash_cs(1)"}
+         {:match "spi_sclk" :signal "flash_clk" :attrs {:drive 8 :slew "fast"}}
+
+         {:match ["sevensegment" n] :attrs {:drive 8 :tig "yes"}} ;; drive 24?
          {:match "sevensegment0" :out "po(8)"}
          {:match "sevensegment1" :out "po(9)"}
          {:match "sevensegment2" :out "po(10)"}
@@ -120,8 +122,10 @@
  ;; padring level
  :padring-entities {"pll_250" {:generics {"CLK_CPU_DIVIDE" CFG_CLK_CPU_DIVIDE}
                                :ports {"clk" "clk_100mhz"
-                                       "clk_cpu" "clkgen_i"}}
-                    "ddr_clkgen" {:ports {"clk_i" "clkgen_i"
+                                       "clk_cpu" "clkgen_i"
+                                       "clk10" "clk10"}}
+                    "ddr_clkgen" {:generics {"clk_i_period" CFG_CLK_CPU_PERIOD_NS}
+                                  :ports {"clk_i" "clkgen_i"
                                           "clk0_o" "clk_sys"
                                           "clk90_o" "clk_sys_90"
                                           "clk2x_o" "clk_sys_2x"
@@ -131,12 +135,25 @@
                                    :ports {"ck_p" "ddr_clk"
                                            "ck2x0" "clk_sys"
                                            "ck2x90" "clk_sys_90"}
-                                   :generics {"READ_SAMPLE_TM" CFG_DDR_READ_SAMPLE_TM}}
-                    "reset_gen" {:ports {"clock_locked1" 1}}}
+                                   :generics {"READ_SAMPLE_TM" (freq_to_read_sample_tm CFG_CLK_MEM_FREQ_HZ)}}
+                    "reset_gen" {:ports {"clock_locked1" 1}}
+                    "spi_merge" {:ports {"mosi_merge" "flash_mosi"
+                                         "miso_merge" "flash_miso"
+                                         "mosi1" "sd_mosi"
+                                         "miso1" "sd_miso"
+                                         "mosi2" "spi_mosi"
+                                         "miso2" "spi_miso"
+                                         "cs" "flash_cs"}}}
 
  ;; list entities, other that the devices entity, that should be
  ;; instantiated at the top level
- :top-entities {"cpus" {:configuration "one_cpu_fpga"}
+ :top-entities {"cpus" {:configuration "one_cpu_decode_rom_fpga"
+                        :ports {"cpu0_copro_i" NULL_COPR_I
+                                "cpu1_copro_i" NULL_COPR_I
+                                "cpu1eni" 0}
+                        :generics {"INSERT_WRITE_DELAY_BOOT_MEM" false
+                                   "INSERT_READ_DELAY_BOOT_MEM" false
+                                   "INSERT_INST_DELAY_BOOT_MEM" false}}
                 "ddr_ram_mux" {:configuration "ddr_ram_mux_one_cpu_idcache_fpga"}
                 "ddr_ctrl" {:entity "ddr_fsm"
                             :ports {"clk_2x" "clk_sys_2x"
@@ -144,7 +161,14 @@
                                     "clk_90" "clk_sys_90"
                                     "fix_pinhi" 0
                                     "fix_pinlo" 0}
-                            :generics {"READ_SAMPLE_TM" CFG_DDR_READ_SAMPLE_TM}}}
+                            :generics {"READ_SAMPLE_TM" (freq_to_read_sample_tm CFG_CLK_MEM_FREQ_HZ)}}
+                "fpga_reboot" {:entity "fpga_reboot"
+                               :architecture "s6"
+                               :ports
+                               {"clk" "clk10"
+                                "en" "reboot"}
+                               :generics
+                               {"resync_en" true}}}
 
  :device-classes
  {$include "../common_device_classes.edn"}

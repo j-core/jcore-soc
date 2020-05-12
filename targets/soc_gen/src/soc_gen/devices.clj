@@ -317,11 +317,26 @@
         (reduce
          (fn [m [name val]]
            (let [name (lower-case name)
-                 gen (get entity-generics name)]
-             (assoc m name
-                    (if (and gen (number? val))
-                      (v/num-val (v/vobj (:type gen)) val)
-                      (v/literal val)))))
+                 gen (get entity-generics name)
+
+                 val
+                 (cond
+                   (and gen (number? val))
+                   (v/num-val (v/vobj (:type gen)) val)
+
+                   (list? val)
+                   (v/func-call-s-expr val)
+
+                   :else
+                   (v/literal val))]
+             (when (nil? val)
+               (errors/add-error
+                (str "Cannot convert generic value for \"" name
+                     "\" of device \"" (:name dev) "\".")))
+
+             (if (nil? val)
+               m
+               (assoc m name val))))
           {}
           (:generics dev))
         ports (:ports dev)
@@ -364,6 +379,7 @@
          ;; left and right bounds which could be defined in a separate
          ;; lib. Should return these also?
          {:type :index-sub-type :base base} (types-used base)
+         {:type :sub-type :sub-type {:type :index-sub-type :base base}} (types-used base)
          {:type :std} nil
          {:type :array-type :id id} (when-not (#{"unsigned" "signed"} id) [id])
          {} (throw (Exception. (str "Unhandled type " t (v/vstr (v/vobj t)))))))
@@ -1357,6 +1373,10 @@ user and information parsed from the vhdl"
                                  used-classes
                                  (map devs used-classes))
                                 devs (select-keys devs used-classes)]
+                            (doseq [cls used-classes]
+                              (when-not (contains? devs cls)
+                                (errors/add-error
+                                 (str "Cannot find device class \"" cls "\""))))
                             (->> (choose-device-arch devs entities archs)
                                  (map
                                   (fn [[name dev]]

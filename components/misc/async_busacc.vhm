@@ -1,0 +1,154 @@
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+use work.cpu2j0_pack.all;
+
+entity async_busacc is port (
+  rst : in std_logic;
+  clk_a : in   std_logic;
+  clk_b : in   std_logic;
+  -- master port
+  db_a_o : in  cpu_data_o_t;
+  db_a_i : out cpu_data_i_t;
+  -- slave port
+  db_b_o : out cpu_data_o_t;
+  db_b_i : in  cpu_data_i_t
+  );
+end async_busacc;
+
+architecture rtl of async_busacc is
+--  type state
+  type fsync_cross_t  is ( VALUE, METASTABLE, STABLE );
+  type fsync_cross_ss_t is array ( fsync_cross_t range VALUE to STABLE )
+       of std_logic;
+  type fsync_cross_db_t is array ( fsync_cross_t range VALUE to STABLE )
+       of cpu_data_o_t;
+  type fsync_cross_dt_t is array ( fsync_cross_t range VALUE to STABLE )
+       of std_logic_vector(31 downto 0);
+  type slave_bus_state is ( IDLE, IN_CYCLE );
+--  type reg_a_t
+--  type reg_b_t
+  type fsync_a_reg_t is record
+    en0 : fsync_cross_ss_t;
+    db0 : fsync_cross_db_t;
+    dt0 : fsync_cross_dt_t;
+    en_pre : std_logic;
+    en_pre_del1 : std_logic;
+    en_return : std_logic;
+    ack : std_logic;
+    ack_1del : std_logic;
+  end record;
+  type fsync_b_reg_t is record
+    en0 : fsync_cross_ss_t;
+    db0 : fsync_cross_db_t;
+    dt0 : fsync_cross_dt_t;
+    state : slave_bus_state;
+    en_1del : std_logic;
+    ack   : std_logic;
+  end record;
+--  constant (A)
+--  constant (B)
+  constant FSYNC_A_REG_RESET : fsync_a_reg_t :=
+    (( '0', '0', '0'),  -- en0
+     ( NULL_DATA_O, NULL_DATA_O, NULL_DATA_O), -- db0
+     ( (others => '0'), (others => '0'), (others => '0') ), -- dt0
+       '0' , '0', '0', '0', '0');
+  constant FSYNC_B_REG_RESET : fsync_b_reg_t :=
+    (( '0', '0', '0'),  -- en0
+     ( NULL_DATA_O, NULL_DATA_O, NULL_DATA_O), -- db0
+     ( (others => '0'), (others => '0'), (others => '0') ), -- dt0
+       IDLE , '0', '0');
+
+  signal ena_head1cyc : std_logic; -- to observe
+
+  register variable thisa : fsync_a_reg_t reset := FSYNC_A_REG_RESET;
+  register variable thisb : fsync_b_reg_t reset := FSYNC_B_REG_RESET;
+
+begin
+  p1 : process( thisa_r,     thisb_r,     db_a_o,      db_b_i)
+    register thisa when clk_a = '1' and clk_a'event reset when rst = '1';
+    register thisb when clk_b = '1' and clk_b'event reset when rst = '1';
+
+  variable db_b_o_pre : cpu_data_o_t;
+  variable nxb : fsync_b_reg_t;
+  variable a_ack1del_cp : std_logic;
+  variable b_wr_stable : std_logic;
+  variable thisb_en0va_copied : std_logic;
+
+  begin -- begin of process
+
+      -- next state(B) initial
+                                  nxb.state := IDLE; -- initial value
+      case thisb.state is     --  |
+      when IDLE =>            --  |
+        if(thisb.en_1del = '1') and
+          (thisb.en0(STABLE) = '0') and
+          (db_b_i.ack = '0') then nxb.state := IN_CYCLE; end if;
+      when others => 
+        if(db_b_i.ack = '0') then nxb.state := IN_CYCLE; end if; end case;
+     
+      -- set blk b signal except en , wr
+                                      db_b_o_pre    := thisb.db0(STABLE);
+      if((thisb.en_1del = '1') and (thisb.en0(STABLE) = '0')) or
+        (thisb.state = IN_CYCLE) then db_b_o_pre.en := '1';
+      else                            db_b_o_pre.en := '0';
+                                      db_b_o_pre.wr := '0'; end if;
+      db_b_o                       <= db_b_o_pre;
+      thisb.state := nxb.state;
+
+   -- -------------------------------------------------------------------------
+   -- bi-directional frequency synchronizer logic start
+   -- -------------------------------------------------------------------------
+   -- 1 del etc, --------------------------------------------------------------
+      a_ack1del_cp    := thisa.ack_1del;
+      thisa.ack_1del  := thisa.ack;
+      thisa.ack       := (not thisa.en0(STABLE)) and
+                         thisa.en_return;
+      thisb.en_1del   := thisb.en0(STABLE);
+      thisa.en_return := thisa.en0(STABLE);
+
+   -- metastable buffers ------------------------------------------------------
+      b_wr_stable       := thisb.db0(STABLE).wr;
+      thisb.en0(STABLE) := thisb.en0(METASTABLE);
+      thisa.en0(STABLE) := thisa.en0(METASTABLE);
+      thisb.db0(STABLE) := thisb.db0(METASTABLE);
+      thisa.dt0(STABLE) := thisa.dt0(METASTABLE);
+
+   -- enable and data flacters ------------------------------------------------
+      thisb.en0(METASTABLE) := thisb.en0(VALUE) xor not thisa.en0(VALUE);
+      thisa.en0(METASTABLE) := thisb.en0(VALUE) xor     thisa.en0(VALUE);
+
+      thisb.db0(METASTABLE) := thisa.db0(VALUE)   ;
+      thisa.dt0(METASTABLE) := thisb.dt0(VALUE)   ;
+
+   -- value (flancter en) -----------------------------------------------------
+      thisb_en0va_copied    := thisb.en0(VALUE);
+      if((b_wr_stable = '0') and (thisb.ack = '1')) or
+        ((b_wr_stable = '1') and (db_b_i.ack = '1')) then
+        thisb.en0(VALUE)    := thisa.en0(VALUE); end if;
+                                            -- write ack transmit to clock A is 
+                                            -- one cycle earlier than read
+      if((thisa.en_pre = '1') and (thisa.en_pre_del1 = '0')) or
+        ((thisa.en_pre = '1') and (a_ack1del_cp   = '1')) then
+           thisa.en0(VALUE) := not (thisb_en0va_copied);
+           ena_head1cyc     <= '1';                 -- observe
+      else ena_head1cyc     <= '0'; end if;         -- observe
+
+   -- value (a free run) ------------------------------------------------------
+      thisa.db0(VALUE)      := db_a_o;
+   -- value (b sampling) ------------------------------------------------------
+      if(db_b_i.ack = '1') then
+        thisb.dt0(VALUE)    := db_b_i.d; end if;
+   -- one before value --------------------------------------------------------
+      thisb.ack             := db_b_i.ack;
+
+      thisa.en_pre_del1     := thisa.en_pre;
+      thisa.en_pre          := db_a_o.en;
+  end process;
+  -- output drive
+  db_a_i.ack <= (not thisa'register.en0(STABLE)) and
+                     thisa'register.en_return;
+  db_a_i.d <=        thisa'register.dt0(STABLE);
+
+end rtl;

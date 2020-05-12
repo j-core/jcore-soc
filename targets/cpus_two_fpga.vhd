@@ -1,4 +1,5 @@
 use work.memory_pack.all;
+use work.data_bus_pack.all;
 
 architecture two_cpus_fpga of cpus is
   signal cpu0_instr_bus_o : instr_bus_o_t;
@@ -16,8 +17,12 @@ architecture two_cpus_fpga of cpus is
   signal cpu0_ram_o        : cpu_data_o_t;
   signal cpu0_ram_prearb_o : cpu_data_o_t;
   signal cpu0_ram_i : cpu_data_i_t;
-  signal cpu0_rom_o : cpu_data_o_t;
-  signal cpu0_rom_i : cpu_data_i_t;
+  signal cpu0_romd_split_o : cpu_data_o_t;
+  signal cpu0_romd_split_i : cpu_data_i_t;
+  signal cpu0_romdt_o : cpu_data_o_t;
+  signal cpu0_romdt_i : cpu_data_i_t;
+  signal cpu0_rominst_o : cpu_instruction_o_t;
+  signal cpu0_rominst_i : cpu_instruction_i_t;
   signal cpu1_ram_o : cpu_data_o_t; -- declared to process cpu1en
   signal ram0_arb_o : ram_arb_o_t; -- only three control signals
   signal ram1_arb_o : ram_arb_o_t; -- only three control signals
@@ -88,6 +93,7 @@ begin
   clkn <= not clk;
 
   cpu0 : cpu_core
+    generic map ( COPRO_DECODE => true )
     port map (
       clk => clk,
       rst => rst,
@@ -101,7 +107,9 @@ begin
       event_o => cpu0_event_o,
       event_i => cpu0_event_i,
       data_master_en => cpu0_data_master_en,
-      data_master_ack => cpu0_data_master_ack);
+      data_master_ack => cpu0_data_master_ack,
+      copro_o => cpu0_copro_o,
+      copro_i => cpu0_copro_i);
 
   cpu0_periph_dbus_o <= cpu0_data_bus_o(DEV_PERIPH);
   cpu0_data_bus_i(DEV_PERIPH) <= cpu0_periph_dbus_i;
@@ -113,6 +121,7 @@ begin
   cpu0_data_bus_i(DEV_DDR) <= cpu0_ddr_dbus_i;
 
   cpu1 : cpu_core
+    generic map ( COPRO_DECODE => true )
     port map (
       clk => clk,
       rst => rst,
@@ -127,7 +136,9 @@ begin
       event_o => cpu1_event_o,
       event_i => cpu1_event_i,
       data_master_en => cpu1_data_master_en,
-      data_master_ack => cpu1_data_master_ack);
+      data_master_ack => cpu1_data_master_ack,
+      copro_o => cpu1_copro_o,
+      copro_i => cpu1_copro_i);
 
   cpu1_periph_dbus_o <= cpu1_data_bus_o(DEV_PERIPH);
   cpu1_data_bus_i(DEV_PERIPH) <= cpu1_periph_dbus_i;
@@ -145,10 +156,30 @@ begin
   split_local_mem_bus(
     master_i => cpu0_data_bus_i(DEV_SRAM),
     master_o => cpu0_data_bus_o(DEV_SRAM),
-    rom_i    => cpu0_rom_i,
-    rom_o    => cpu0_rom_o,
+    rom_i    => cpu0_romd_split_i,
+    rom_o    => cpu0_romd_split_o,
     ram_i    => cpu0_ram_i,
     ram_o    => cpu0_ram_prearb_o);
+
+  -- connetcion figure
+  --    ^
+  --    | cpu0_data_bus_io
+  --    V
+  --  +-splitter--------------------+ 
+  --  +-----------------------------+
+  --    ^                         ^
+  --    | cpu0_romd_split_io      | cpu0_ram_prearb_o,cpu0_ram_i
+  --    V                         V
+  --  +---+ insert delay          +----> +-cpu_mreg-+ <--- cpu1
+  --  +---+                       |      | (arbitr) |
+  --    ^                         | +--- +----------+ --->
+  --    | cpu0_romdt_io           | V cpu0ram_a_en,
+  --    |                        +V--+
+  --    |  +--> instr side acc   +V--+ and gate
+  --    V  V                      ^
+  --  +------+                    | cpu0_ram_io
+  --  | rom  |                    V
+  --    (cpu0 only)              shared ram
 
   -- cpu1 is not connected to the rom
   cpu1_instr_bus_i(DEV_SRAM) <= loopback_bus(cpu1_instr_bus_o(DEV_SRAM));
@@ -173,12 +204,30 @@ begin
   sram : entity work.memory_fpga(struc)
     port map (
       clk => clk,
-      ibus_i => cpu0_instr_bus_o(DEV_SRAM),
-      ibus_o => cpu0_instr_bus_i(DEV_SRAM),
-      db_i => cpu0_rom_o,
-      db_o => cpu0_rom_i);
+      ibus_i => cpu0_rominst_o,
+      ibus_o => cpu0_rominst_i,
+      db_i => cpu0_romdt_o,
+      db_o => cpu0_romdt_i);
+
+  bootmem_onewait_data : entity work.data_bus_delay (rtl)
+      generic map (INSERT_WRITE_DELAY => INSERT_WRITE_DELAY_BOOT_MEM,
+                   INSERT_READ_DELAY  => INSERT_READ_DELAY_BOOT_MEM)
+      port map ( clk => clk, rst => rst,
+        master_o => cpu0_romd_split_o ,
+        master_i => cpu0_romd_split_i ,
+        slave_o =>  cpu0_romdt_o ,
+        slave_i =>  cpu0_romdt_i );
+
+  bootmem_onewait_inst : entity work.instr_bus_delay (rtl)
+      generic map (INSERT_DELAY => INSERT_INST_DELAY_BOOT_MEM)
+      port map ( clk => clk, rst => rst,
+        master_o => cpu0_instr_bus_o(DEV_SRAM) ,
+        master_i => cpu0_instr_bus_i(DEV_SRAM) ,
+        slave_o =>  cpu0_rominst_o ,
+        slave_i =>  cpu0_rominst_i );
 
   -- 2KB of shared RAM
+
   -- caution: 0.5cycle SRAM access critical path. (caution again)
 
   shared_ram : ram_2rw
@@ -240,7 +289,8 @@ begin
       db0_o => cpu0_data_bus_i(DEV_CPU),
       db1_o => cpu1_data_bus_i(DEV_CPU),
       cpu0ram_a_en => cpu0ram_a_en,
-      cpu1ram_a_en => cpu1ram_a_en);
+      cpu1ram_a_en => cpu1ram_a_en,
+      cpu1en_sbu => cpu1eni);
 
    ram0_arb_o.en   <= cpu0_ram_prearb_o.en;
    ram0_arb_o.wr   <= cpu0_ram_prearb_o.wr;
@@ -251,7 +301,7 @@ begin
 
 end architecture;
 
-configuration two_cpus_fpga of cpus is
+configuration two_cpus_decode_direct_fpga of cpus is
   for two_cpus_fpga
     for shared_ram : ram_2rw
       use entity work.ram_2rw(inferred);
@@ -260,7 +310,47 @@ configuration two_cpus_fpga of cpus is
       use entity work.cpu_core(arch);
       for arch
         for u_cpu : cpu
-          use configuration work.cpu_fpga;
+          use configuration work.cpu_decode_direct_fpga;
+        end for;
+      end for;
+    end for;
+  end for;
+end configuration;
+
+configuration two_cpus_decode_rom_fpga of cpus is
+  for two_cpus_fpga
+    for shared_ram : ram_2rw
+      use entity work.ram_2rw(inferred);
+    end for;
+    for all : cpu_core
+      use entity work.cpu_core(arch);
+      for arch
+        for u_cpu : cpu
+          use configuration work.cpu_decode_rom_fpga;
+        end for;
+      end for;
+    end for;
+  end for;
+end configuration;
+
+configuration two_cpus_decode_rodimix_fpga of cpus is
+  for two_cpus_fpga
+    for shared_ram : ram_2rw
+      use entity work.ram_2rw(inferred);
+    end for;
+    for cpu0 : cpu_core
+      use entity work.cpu_core(arch);
+      for arch
+        for u_cpu : cpu
+          use configuration work.cpu_decode_direct_fpga;
+        end for;
+      end for;
+    end for;
+    for cpu1 : cpu_core
+      use entity work.cpu_core(arch);
+      for arch
+        for u_cpu : cpu
+          use configuration work.cpu_decode_rom_fpga;
         end for;
       end for;
     end for;

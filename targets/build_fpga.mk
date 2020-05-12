@@ -6,5 +6,6 @@ $(VHDLS) += ddr_ram_mux/one_cpu_icache.vhd
 $(VHDLS) += ddr_ram_mux/one_cpu_icache_fpga.vhd
 $(VHDLS) += ddr_ram_mux/one_cpu_idcache.vhd
 $(VHDLS) += ddr_ram_mux/one_cpu_idcache_fpga.vhd
+#$(VHDLS) += ddr_ram_mux/one_cpu_prefetch.vhd
 $(VHDLS) += ddr_ram_mux/two_cpu_idcache.vhd
 $(VHDLS) += ddr_ram_mux/two_cpu_idcache_fpga.vhd

@@ -9,6 +9,8 @@ architecture k7 of clkin10_clkgen is
   signal clkfbout         : std_logic;
   signal clkout0          : std_logic;
   signal clkout1          : std_logic;
+  signal clkout2          : std_logic;
+  signal clkout3          : std_logic;
   signal mmcm_feedback_in : std_logic;
   signal mmcm_feedback_out: std_logic;
   -- status signals
@@ -86,10 +88,11 @@ begin
     CLKOUT1_DIVIDE       => 4,
     CLKOUT1_PHASE        => 0.000,
     CLKOUT1_DUTY_CYCLE   => 0.500,
-    -- unused
-    CLKOUT2_DIVIDE       => 8,
+    -- emac 50MHz
+    CLKOUT2_DIVIDE       => 20,
     CLKOUT2_PHASE        => 0.000,
     CLKOUT2_DUTY_CYCLE   => 0.500,
+    -- unused
     CLKOUT3_DIVIDE       => 8,
     CLKOUT3_PHASE        => 0.000,
     CLKOUT3_DUTY_CYCLE   => 0.500,
@@ -106,6 +109,8 @@ begin
     CLKFBOUT            => clkfbout,
     CLKOUT0             => clkout0,
     CLKOUT1             => clkout1,
+    CLKOUT2             => clkout2,
+    CLKOUT3             => clkout3,
     -- Input clock control
     CLKFBIN             => clkfbout,
     CLKIN1              => clkpll,
@@ -133,5 +138,7 @@ begin
   -------------------------------------
   clkout0_buf : BUFG port map (O => clk_bitlink,    I => clkout0);
   clkout1_buf : BUFG port map (O => clk_bitlink_2x, I => clkout1);
+  clkout2_buf : BUFG port map (O => clk_emac      , I => clkout2);
+  clkout3_buf : BUFG port map (O => clk_fpga_cfg2 , I => clkout3);
 
 end architecture;

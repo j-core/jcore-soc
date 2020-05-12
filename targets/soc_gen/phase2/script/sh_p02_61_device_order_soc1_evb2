@@ -1,0 +1,20 @@
+#! /bin/csh -f
+
+# -----
+# delay related optimization (with high LUT ulit. case)
+# line order change: before dsm_recv -> emac
+#                  : after  emac -> dsm_recv
+# -----
+
+set TEMPFILE1 = tmp.sh_p02_61_dev.001
+
+cat > $TEMPFILE1
+
+# 4 path search -- 
+sed    -e   '/dsm_recv : entity/,$d'    $TEMPFILE1
+sed -n -e   '/emac : configurat/,/);/p' $TEMPFILE1
+sed -n -e   '/dsm_recv : entity/,/);/p' $TEMPFILE1
+sed    -e '1,/emac : configurat/d'      $TEMPFILE1 | \
+  sed  -e '1,/);/d'
+
+rm $TEMPFILE1

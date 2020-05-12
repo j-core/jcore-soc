@@ -1,4 +1,5 @@
 {:target :spartan6
+ :plugins #import "../default_plugins.edn"
  :pins {:file "../pins/microboard.pins"
         :type :pin-names
         :rules
@@ -12,15 +13,12 @@
          ;;   Internal pull-down required since external resistor is not populated
          {:match "user_reset" :signal true :attrs {:pulldown true}}
 
-         ;;{:match "spi_.*" :signal true}
-         ;; never select on board flash
-         {:match "spi_cs" :out 1}
          {:match "user_clock" :signal true}
          {:match "clock_y3" :signal true :buff false}
          {:match ["led" n] :signal ["po(" n ")"] :attrs {:iostandard "LVCMOS18"}}
 
-         {:match "rxd" :signal "uart_rx"}
-         {:match "txd" :signal "uart_tx"}
+         {:match "rxd" :signal "uart0_rx"}
+         {:match "txd" :signal "uart0_tx"}
 
          {:match "scl" :signal true}
          {:match "sda" :signal true}
@@ -62,10 +60,30 @@
          {:match ["pmod" n "_p" m] :signal ["pmod" n "(" m ")"]
           :attrs {:iostandard "LVCMOS25"}}
 
-         {:match "pmod1_p2" :signal "spi_mosi"}
-         {:match "pmod1_p10" :signal "spi_miso" :attrs {:pullup true}}
-         {:match "pmod1_p9" :signal "spi_clk"}
-         {:match "pmod1_p8" :signal "spi_cs(0)"}
+         ;; ethernet
+         {:match "eth_.*" :attrs {:iostandard "LVCMOS25"}}
+         {:match "eth_col" :signal "emac_phy_rx_col" :attrs {:pulldown true}}
+         {:match "eth_crs" :signal "emac_phy_rx_crs" :attrs {:pulldown true}}
+         {:match ["eth_tx_d" n] :signal ["emac_phy_txd(" n ")"]}
+         ;; Pull-ups on RXD are necessary to set the PHY AD to 11110b.
+         ;; Must keep the PHY from defaulting to PHY AD = 00000b      
+         ;; because this is Isolate Mode                              
+         {:match ["eth_rx_d" n] :signal ["emac_phy_rxd(" n ")"]  :attrs {:pullup true}}
+         {:match "eth_rx_dv" :signal "emac_phy_rx_dv"}
+         {:match "eth_rx_er" :signal "emac_phy_rx_er"}
+         {:match "eth_tx_en" :signal "emac_phy_tx_en"}
+         {:match "eth_reset_n" :signal "emac_phy_resetn"}
+         {:match "eth_rx_clk" :signal "eth_rx_clk_i" :buff false}
+         {:match "eth_tx_clk" :signal "eth_tx_clk_i" :buff false}
+
+         ;; off-board spi
+         {:match "pmod1_p(2|10|9|8)" :attrs {:drive 8 :slew "fast"}}
+         {:match "pmod1_p2" :signal "flash_mosi"}
+         {:match "pmod1_p10" :signal "flash_miso" :attrs {:pullup true}}
+         {:match "pmod1_p9" :signal "flash_clk"}
+         {:match "pmod1_p8" :signal "flash_cs(0)"}
+         ;; fpga config flash chip select
+         {:match "spi_cs" :signal "flash_cs(1)"}
          ]
         }
 
@@ -75,12 +93,9 @@
  ;; the right is renamed to the signal on the left
  :merge-signals
  {"pll_rst" ["ddr_clkgen_reset_i" "pll_250_reset_o"]
-  "clock_locked" ["ddr_clkgen_locked" "clk_ddr"]
-  "clk_sys" ["clk_sys" "ddr_clkgen_clk0_o" "clk_50_0"]
-  "clk_sys_90" ["ddr_clkgen_clk90_o" "clk_50_90"]
-  "clk_sys2x" ["ddr_clkgen_clk2x_o"]
-  "clock_y3" ["clock_input"]
-  "clk31_todcm" ["pll_250_clk31" "ddr_clkgen_clk_i"]}
+  "clk_sys" ["clk_cpu" "clk_mem"]
+  "clk_sys_90" ["clk_mem_90"]
+  "clk_sys_2x" ["clk_mem_2x"]}
 
  ;; Supply a zero value for a list of global signals that aren't
  ;; output by devices in the design
@@ -88,45 +103,104 @@
  ["icache0_ctrl"
   "icache1_ctrl"
   "cache01sel_ctrl_temp"
-  "dcache_ctrl"
+  "dcache0_ctrl"
+  "dcache1_ctrl"
   "dma_dbus_o"
-  "debug_i"]
+  "cpu0_event_i"
+  "cpu1_event_i"]
+
+ :peripheral-buses
+ {"cpu1" false}
 
  :system
- {:pio
+ {:data-bus-decode :exact
+  :dram [0x10000000 0x4000000]
+  :pio
   {[0 3] {:name "led"}
    [5 31] 0}}
 
+ :soc
+ {$include "../soc.edn"}
+
  ;; list entities, other than top, that should be instantiated at the
  ;; padring level
- :padring-entities {"pll_250" {}
-                    "ddr_clkgen" {} ;; why no work? {:ports {"ddr_clk0" {:signal "clk_sys"}}}
+ :padring-entities {"pll_250" {:ports {"clk" "clock_y3"
+                                       "clk_cpu" "clkgen_i"}}
+                    "ddr_clkgen" {:generics {"clk_i_period" CFG_CLK_CPU_PERIOD_NS}
+                                  :ports {"clk_i" "clkgen_i"
+                                          "clk0_o" "clk_sys"
+                                          "clk90_o" "clk_sys_90"
+                                          "clk2x_o" "clk_sys_2x"
+                                          "locked" "clock_locked0"}}
                     "ddr_iocells" {}
-                    "reset_gen" {}}
+                    "reset_gen" {:ports {"clock_locked1" 1}}
+                    "eth_clk_bufs" {}}
 
  ;; list entities, other that the devices entity, that should be
  ;; instantiated at the top level
- :top-entities {"cpus" {:architecture "one_cpu"}
+ :top-entities {"cpus" {:configuration "one_cpu_nocopro_decode_rom_fpga"
+                        :ports {"cpu0_copro_i" NULL_COPR_I
+                                "cpu1_copro_i" NULL_COPR_I
+                                "cpu1eni" 0
+                                "debug_i" CPU_DEBUG_NOP}
+                        :generics {"INSERT_WRITE_DELAY_BOOT_MEM" false
+                                   "INSERT_READ_DELAY_BOOT_MEM" false
+                                   "INSERT_INST_DELAY_BOOT_MEM" false}}
                 "ddr_ram_mux" {:architecture "one_cpu_direct"}
                 "ddr_ctrl" {:generics {"c_data_width" CFG_DDRDQ_WIDTH
                                        "c_sa_width" CFG_SA_WIDTH
                                        "c_dll_enable" 2
-                                       "c_period_clkbus" CFG_BUS_PERIOD}}}
+                                       "c_period_clkbus" CFG_CLK_CPU_PERIOD_NS}}}
 
  :device-classes
- {$include "../common_device_classes.edn"}
+ {$include "../common_device_classes.edn"
+  "emac" {:entity "eth_mac"
+          :configuration nil
+          :generics
+          {"ASYNC_BUS_BRIDGE" nil
+           "INSERT_WRITE_DELAY_ETHRX" nil 
+           "INSERT_READ_DELAY_ETHRX" nil}}}
  :devices
  [{:class "gpio"
    :base-addr 0xabcd0000
    :irq 4}
-  {:class "spi"
-   :base-addr 0xabcd0040
-   :generics {"c_csnum" 2
-              "fclk" 31.25e6}}
+  {:class "aic"
+   :name "aic0"
+   :cpu 0
+   :dt-label "aic"
+   :base-addr 0xabcd0200
+   :generics {"c_busperiod" CFG_CLK_CPU_PERIOD_NS
+              "rtc_sec_length34b" true}
+   :ports {"bstb_i" "cpu0_data_master_en"
+           "back_i" "cpu0_data_master_ack"
+           "rtc_sec" "rtc_sec"
+           "rtc_nsec" "rtc_nsec"
+           "enmi_i" 1
+           "event_i" "cpu0_event_o"
+           "event_o" "cpu0_event_i"}}
   {:class "uartlite"
-   :name "uart"
+   :name "uart0"
    :base-addr 0xabcd0100
    :irq 1
    :generics {"intcfg" 1
-              "fclk" 31.25e6
-              "bps" 115.2e3}}]}
+              "bps" 115.2e3}
+   :dt-props {:current-speed (115200)
+              :port-number (0)}
+   :dt-stdout true}
+  {:class "spi"
+   :name "flash"
+   :base-addr 0xabcd0040
+   :generics {"num_cs" 2}}
+  {:class "emac"
+   :base-addr 0xabce0000
+   :irq 0
+   :ports {"clk_sys" "clk_sys"
+           "dbsys_i_en" '0'
+           "dbsys_i_a" 0
+           "dbsys_i_d" 0
+           "dbsys_i_wr" '0'
+           "dbsys_i_we" 0}
+   :generics {"c_addr_width" 11
+              "c_buswidth" 32
+              "default_mac_addr" 0
+              "ASYNC_BRIDGE_IMPL2" false}}]}

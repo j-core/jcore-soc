@@ -11,7 +11,8 @@ architecture k7 of clkin25_clkgen is
   signal clkout1       : std_logic;
   signal clkout2       : std_logic;
   signal clkout3       : std_logic;
-  --signal clkout5          : std_logic;
+  signal clkout4       : std_logic;
+  signal clkout5       : std_logic;
   signal pll_locked    : std_logic;
 
 begin
@@ -31,7 +32,7 @@ begin
       BANDWIDTH      => "OPTIMIZED",
       COMPENSATION   => "ZHOLD",
       DIVCLK_DIVIDE  => 1,
-      CLKFBOUT_MULT  => 40,
+      CLKFBOUT_MULT  => CLK_PLLE2_MULT,
       CLKFBOUT_PHASE => 0.000,
       -- clk_cpu
       CLKOUT0_DIVIDE     => CLK_CPU_DIVIDE,
@@ -49,12 +50,12 @@ begin
       CLKOUT3_DIVIDE     => CLK_MEM_2X_DIVIDE,
       CLKOUT3_PHASE      => 0.000,
       CLKOUT3_DUTY_CYCLE => 0.500,
-      -- unused
-      CLKOUT4_DIVIDE     => 20,
-      CLKOUT4_PHASE      => 90.000,
+      -- clk_fpga_cfg
+      CLKOUT4_DIVIDE     => 50,
+      CLKOUT4_PHASE      => 0.000,
       CLKOUT4_DUTY_CYCLE => 0.500,
-      -- unused
-      CLKOUT5_DIVIDE     => 8,
+      -- clk_cpu_0_5x
+      CLKOUT5_DIVIDE     => 2*CLK_CPU_DIVIDE,
       CLKOUT5_PHASE      => 0.000,
       CLKOUT5_DUTY_CYCLE => 0.500,
 
@@ -67,6 +68,8 @@ begin
       CLKOUT1  => clkout1,
       CLKOUT2  => clkout2,
       CLKOUT3  => clkout3,
+      CLKOUT4  => clkout4,
+      CLKOUT5  => clkout5,
       -- Other control and status signals
       LOCKED   => pll_locked,
       PWRDWN   => '0',
@@ -98,5 +101,7 @@ begin
   clkout1_buf : BUFG port map (O => clk_mem,    I => clkout1);
   clkout2_buf : BUFG port map (O => clk_mem_90, I => clkout2);
   clkout3_buf : BUFG port map (O => clk_mem_2x, I => clkout3);
+  clkout4_buf : BUFG port map (O => clk_fpga_cfg, I => clkout4);
+  clkout5_buf : BUFG port map (O => clk_cpu_0_5x, I => clkout5);
 
 end architecture;

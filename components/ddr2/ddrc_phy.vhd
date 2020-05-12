@@ -50,12 +50,12 @@ entity ddr_phy is
     d_do  : out   dr_data_o_t ;
     d_c   : out   sd_ctrl_t ) ;
 
-  attribute sei_port_global_name of s_o : signal is "ddr_sd_data_o";
-  attribute sei_port_global_name of s_i : signal is "ddr_sd_data_i";
-  attribute sei_port_global_name of s_c : signal is "ddr_sd_pre_ctrl";
-  attribute sei_port_global_name of d_di : signal is "dr_data_i";
-  attribute sei_port_global_name of d_do : signal is "dr_data_o";
-  attribute sei_port_global_name of d_c : signal is "ddr_sd_ctrl";
+  attribute soc_port_global_name of s_o : signal is "ddr_sd_data_o";
+  attribute soc_port_global_name of s_i : signal is "ddr_sd_data_i";
+  attribute soc_port_global_name of s_c : signal is "ddr_sd_pre_ctrl";
+  attribute soc_port_global_name of d_di : signal is "dr_data_i";
+  attribute soc_port_global_name of d_do : signal is "dr_data_o";
+  attribute soc_port_global_name of d_c : signal is "ddr_sd_ctrl";
 end ddr_phy;
 
 architecture beh of ddr_phy is

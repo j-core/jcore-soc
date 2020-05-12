@@ -7,6 +7,8 @@ library unisim;
 use unisim.vcomponents.all;
 
 entity ddr_clkgen is
+    generic (
+       clk_i_period : integer);
     Port ( clk_i    : in  std_logic;
            clk0_o   : out std_logic;
            clk90_o  : out std_logic;
@@ -39,7 +41,7 @@ begin
 	CLKFX_DIVIDE => 1, -- Can be any interger from 1 to 32
 	CLKFX_MULTIPLY => 4, -- Can be any Integer from 1 to 32
 	CLKIN_DIVIDE_BY_2 => FALSE, -- TRUE/FALSE to enable CLKIN divide by two feature
-	CLKIN_PERIOD => 32.0, -- Specify period of input clock
+	CLKIN_PERIOD => real(clk_i_period), -- Specify period of input clock
 	CLKOUT_PHASE_SHIFT => "NONE", -- Specify phase shift of NONE, FIXED or VARIABLE
 	CLK_FEEDBACK => "1X", -- Specify clock feedback of NONE, 1X or 2X
 	DESKEW_ADJUST => "SYSTEM_SYNCHRONOUS", -- SOURCE_SYNCHRONOUS, SYSTEM_SYNCHRONOUS or

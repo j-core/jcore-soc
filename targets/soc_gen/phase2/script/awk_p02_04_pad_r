@@ -1,0 +1,27 @@
+BEGIN { state = 0; }
+{
+  if     (($1 == "signal") && ($2 == "clk_sys")) {
+    print $0;
+    print "    signal clk_sys_0_5x : std_logic;";
+  }
+  else if(($1 == "soc") && ($3 == "entity")) {
+    print $0;
+    state = 1;
+  }
+  else if((state == 1) && ($1 == "clk_sys")) {
+    print $0;
+    print "            clk_sys_0_5x => clk_sys_0_5x,";
+    state = 0;
+  }
+  else if(($1 == "clkin25_clkgen") && ($3 == "entity")) {
+    print $0;
+    state = 2;
+  }
+  else if((state == 2) && ($1 == "clk_cpu_0_5x")) {
+      print "            clk_cpu_0_5x => clk_sys_0_5x,";
+    state = 0;
+  }
+  else {
+    print $0;
+  }
+}

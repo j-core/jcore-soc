@@ -1,0 +1,12 @@
+#  note: bus_wordloopbackack can be used for logic that treats loopback
+#           ack as
+#           db_o.ack <= db_i.en;
+#
+#bus_word  DEV_AIC0
+#bus_word  DEV_AIC1
+#bus_wordloopbackack  DEV_CACHE_CTRL
+#bus_wordloopbackack  DEV_FLASH
+#bus_wordloopbackack  DEV_GPIO
+#bus_word  DEV_EMAC
+#bus_word  DEV_UART0
+

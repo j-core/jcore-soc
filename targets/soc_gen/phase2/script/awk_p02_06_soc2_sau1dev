@@ -1,0 +1,33 @@
+BEGIN {
+  state = 0;
+}
+{
+  if     ($0 ~ /signal reboot[12]/) {
+    state = 999;
+    memo = "this_input_file_is_processed_ph2_once_so_no_cook_any_more";
+    print $0;
+  }
+  else if(state == 999) {
+    print $0;
+  }
+  else {
+    if($0 ~ /signal ref_curve_gen_angle/) {
+      print "    signal reboot1 : std_logic;";
+      print "    signal reboot2 : std_logic;";
+      print $0;
+    }
+    else if($0 ~ /^ *reboot.*reboot.*,/) {
+      print "            reboot => reboot1,";
+    }
+    else if($0 ~ /^ *reboot.*open.*,/) {
+      state = 1;
+      print "            reboot => reboot2,";
+    }
+    else if(($0 ~ /;/) && (state == 1)) {
+      state = 2;
+      print $0;
+      print "    reboot <= reboot1 or reboot2;";
+    }
+    else { print $0; }
+  }
+}

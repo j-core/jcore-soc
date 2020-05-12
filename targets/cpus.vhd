@@ -9,6 +9,10 @@ use work.config.all;
 use work.cpu_core_pack.all;
 
 entity cpus is
+  generic (
+    INSERT_WRITE_DELAY_BOOT_MEM : boolean;
+    INSERT_READ_DELAY_BOOT_MEM : boolean;
+    INSERT_INST_DELAY_BOOT_MEM : boolean);
   port (
     clk : in std_logic;
     rst : in std_logic;
@@ -42,11 +46,18 @@ entity cpus is
     cpu1_data_master_en : out std_logic;
     cpu0_data_master_ack : out std_logic;
     cpu1_data_master_ack : out std_logic;
+    cpu1eni : in std_logic ;
 
     cpu0_event_o : out cpu_event_o_t;
     cpu0_event_i : in cpu_event_i_t;
     cpu1_event_o : out cpu_event_o_t;
-    cpu1_event_i : in cpu_event_i_t);
+    cpu1_event_i : in cpu_event_i_t;
+
+    cpu0_copro_o : out cop_o_t;
+    cpu0_copro_i : in  cop_i_t;
+    cpu1_copro_o : out cop_o_t;
+    cpu1_copro_i : in  cop_i_t);
+
 -- synopsys translate_off
   group global_sigs : global_ports(
     cpu0_ddr_ibus_o,

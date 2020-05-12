@@ -28,10 +28,10 @@ entity spi is
 -- synopsys translate_off
 	group bus_sigs : bus_ports(db_i, db_o);
 -- synopsys translate_on
-	attribute sei_port_local_name of spi_clk : signal is "clk";
-	attribute sei_port_local_name of spi_flashcs_o : signal is "cs";
-	attribute sei_port_local_name of spi_miso : signal is "miso";
-	attribute sei_port_local_name of spi_mosi : signal is "mosi";
+	attribute soc_port_local_name of spi_clk : signal is "clk";
+	attribute soc_port_local_name of spi_flashcs_o : signal is "cs";
+	attribute soc_port_local_name of spi_miso : signal is "miso";
+	attribute soc_port_local_name of spi_mosi : signal is "mosi";
 
 end entity spi;
 

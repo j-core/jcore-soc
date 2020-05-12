@@ -35,11 +35,14 @@ package data_bus_pack is
   function loopback_bus(b : cpu_instruction_o_t) return cpu_instruction_i_t;
   function mask_data_o(d: cpu_data_o_t; en : std_logic)
     return cpu_data_o_t;
+  function mask_instruction_o(d: cpu_instruction_o_t; en : std_logic)
+    return cpu_instruction_o_t;
 
   type cache_ctrl_t is record
     en  : std_logic;
     inv : std_logic;
   end record;
+  constant NULL_CACHE_CTRL : cache_ctrl_t := (en => '0', inv => '0');
 end;
 
 package body data_bus_pack is
@@ -93,6 +96,14 @@ package body data_bus_pack is
     r.en := en and d.en;
     r.rd := en and d.rd;
     r.wr := en and d.wr;
+    return r;
+  end function;
+  function mask_instruction_o(d: cpu_instruction_o_t; en : std_logic)
+  return cpu_instruction_o_t is
+    variable r : cpu_instruction_o_t := d;
+  begin
+    r.en := en and d.en;
+    r.jp := en and d.jp;
     return r;
   end function;
 end package body;

@@ -17,23 +17,9 @@ entity spi2 is
   generic (
     NUM_CS   : integer range 2 to 5         := 2;
     CLK_FREQ : real range 25.0e6 to 125.0e6;
-    -- CPOL controls clock polarity. If '0' then clock idles low, else if '1'
-    -- then clock idles high.
-    CPOL     : std_logic                    := '0';
-    -- CPHA controls when miso is sampled. If '0' then miso is sampled at the
-    -- first edge, else if '1' then miso is sampled at the second edge. CPOL
-    -- determines whether the first edge or second edge is a rising edge.
-    CPHA     : std_logic                    := '0';
-    -- Together CPOL and CPHA control the SPI mode.
-    -- Mode	CPOL	CPHA	Sample
-    -----------------------------------------------
-    --  0	0	0	Leading (Rising) Edge
-    --  1	0	1	Trailing (Falling) Edge
-    --  2	1	0	Leading (Falling) Edge
-    --  3	1	1	Trailing (Rising) Edge
 
     LOW_SPEED_FREQ  : real := 400.0e3;
-    HIGH_SPEED_FREQ : real := 12.5e6 -- TODO: Why not 25MHz?
+    HIGH_SPEED_FREQ : real := 25.0e6
     );
   port (
     clk     : in  std_logic;
@@ -43,12 +29,12 @@ entity spi2 is
     spi_clk : out std_logic;
     cs      : out std_logic_vector(NUM_CS - 1 downto 0);
     miso    : in  std_logic;
-    mosi    : out std_logic);
+    mosi    : out std_logic;
+    busy    : out std_logic;
+    cpha    : in std_logic;
+    cpol    : in std_logic );
 
-  attribute sei_port_local_name of spi_clk : signal is "clk";
-  attribute sei_port_local_name of cs      : signal is "cs";
-  attribute sei_port_local_name of miso    : signal is "miso";
-  attribute sei_port_local_name of mosi    : signal is "mosi";
+  attribute soc_port_local_name of spi_clk : signal is "clk";
 end entity;
 
 architecture arch of spi2 is
@@ -70,7 +56,7 @@ architecture arch of spi2 is
   -- 31 are both 400kHz and 0 is 12.5MHz.
 
   constant MIN_SPI_CLK_FREQ : real := 400.0e3;
-  constant MAX_SPI_CLK_FREQ : real := 12.5e6; -- TODO: Why not 25MHz?
+  constant MAX_SPI_CLK_FREQ : real := 25.0e6;
   
   -- If we flip the spi clk once every N clock cycles at a freq_sys
   -- frequency, then the spi clk freq is:
@@ -109,7 +95,7 @@ architecture arch of spi2 is
   type spi_reg_t is record
     state         : state_t;
     clk           : std_logic;
-    db_o          : cpu_data_i_t;
+--  db_o          : cpu_data_i_t;
     -- number of pairs of clk edges output in the current transaction thus far
     edge_pair_cnt : unsigned(2 downto 0);
     cyc_cnt       : cycle_count_t;
@@ -124,8 +110,8 @@ architecture arch of spi2 is
 
   constant SPI_RESET : spi_reg_t := (
     state         => IDLE,
-    clk           => CPOL,
-    db_o          => (d => (others => '0'), ack => '0'),
+    clk           => '0',
+--  db_o          => (d => (others => '0'), ack => '0'),
     edge_pair_cnt => (others => '0'),
     cyc_cnt       => (others => '0'),
     speed         => (others => '1'),
@@ -148,9 +134,10 @@ architecture arch of spi2 is
     end if;
   end;
 begin
-  p : process(this, db_i, miso)
+  p : process(this, db_i, miso, cpol, cpha)
     register this when clk = '1' and clk'event reset when rst = '1';
 
+    variable db_o_d      : std_logic_vector(31 downto  0);
     variable is_clk_edge : boolean;
     variable start_txn   : boolean;
     variable ack_cycle   : std_logic;
@@ -164,10 +151,14 @@ begin
 
     -- Step 1: Handle data bus writes and reads. Requests are acked the cycle
     -- after they are received.
-    ack_cycle     := this.db_o.ack;
-    this.db_o.ack := '0';
-    this.db_o.d   := (others => '0');
-    if db_i.en = '1' and ack_cycle = '0' then
+--  ack_cycle     := this.db_o.ack;
+--  this.db_o.ack := '0';
+    db_o_d        := (others => '0');
+    -- spi2 busy
+    if(this.state = IDLE) then busy <= '0';
+    else                       busy <= '1'; end if;
+    -- end of spi2 busy
+    if db_i.en = '1' then
       if db_i.wr = '1' then
         if db_i.a(2) = '0' then
           -- ctrl
@@ -186,22 +177,24 @@ begin
       else
         if db_i.a(2) = '0' then
           -- status
-          this.db_o.d(0) := this.cs(0);
-          this.db_o.d(1) := to_bit(this.state /= IDLE);  -- busy?
-          this.db_o.d(2) := this.cs(1);
-          this.db_o.d(3) := to_bit(this.loopback);
+          db_o_d(0) := this.cs(0);
+          db_o_d(1) := to_bit(this.state /= IDLE);  -- busy?
+          db_o_d(2) := this.cs(1);
+          db_o_d(3) := to_bit(this.loopback);
           for i in 2 to NUM_CS-1 loop
-            this.db_o.d(2+i) := this.cs(i);
+            db_o_d(2+i) := this.cs(i);
           end loop;
           -- TODO: Old spi.vhd did not support reading speed
           --db_o.d(31 downto 27) := std_logic_vector(this.speed);
         else
           -- rx data
-          this.db_o.d(7 downto 0) := this.rx;
+          db_o_d(7 downto 0) := this.rx;
         end if;
       end if;
-      this.db_o.ack := '1';
+ --   this.db_o.ack := '1';
     end if;
+    db_o.d   <= db_o_d;
+    db_o.ack <= db_i.en;
 
     -- Step 2: Decide if spi clock needs an edge
     cyc_cnt     := ('1' & this.cyc_cnt) - 1;  -- decrement with borrow in
@@ -238,31 +231,31 @@ begin
     shift  := false;
     case this.state is
       when IDLE =>
-        this.clk := CPOL;
+        this.clk := cpol;
         if start_txn then
           this.state    := LEAD_EDGE;
           this.tx_shift := '1' & this.tx;
-          shift         := CPHA = '0';
+          shift         := cpha = '0';
         end if;
       when LEAD_EDGE =>
         if is_clk_edge then
-          this.clk   := not CPOL;
+          this.clk   := not cpol;
           this.state := TRAIL_EDGE;
 
-          shift  := CPHA = '1';
-          sample := CPHA = '0';
+          shift  := cpha = '1';
+          sample := cpha = '0';
         end if;
       when TRAIL_EDGE =>
         if is_clk_edge then
-          this.clk := CPOL;
+          this.clk := cpol;
           if this.edge_pair_cnt = 7 then
             -- transaction is almost complete, stop changing the spi clk
             this.state := WAITING;
           else
             this.state := LEAD_EDGE;
           end if;
-          shift              := CPHA = '0';
-          sample             := CPHA = '1';
+          shift              := cpha = '0';
+          sample             := cpha = '1';
           this.edge_pair_cnt := this.edge_pair_cnt + 1;  -- rolls over
         end if;
       when WAITING =>
@@ -291,14 +284,10 @@ begin
     end if;
   end process;
 
-  spi_clk <= this'register.clk;
+  spi_clk <= this'register.clk ;
   mosi    <= this'register.tx_shift(8);
-  db_o    <= this'register.db_o;
 
-  -- TODO: Why does old spi.vhd negate all but one of the cs? Should negate
-  -- inverted CS pins in pad_ring.
-  cs(0)                 <= this'register.cs(0);
-  cs(NUM_CS-1 downto 1) <= not this'register.cs(NUM_CS-1 downto 1);
+  cs <= this'register.cs(NUM_CS-1 downto 0);
 
 end architecture;
 

@@ -1,0 +1,203 @@
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+use work.cpu2j0_pack.all;
+
+entity bussizem is port (
+  rst      : in std_logic;
+  clk      : in   std_logic;
+  clk_half : in   std_logic;
+  -- master port                  (clk)
+  db_a_o : in  cpu_data_o_t;
+  db_a_i : out cpu_data_i_t;
+  -- slave port                   (clk_half)
+  db_b_o : out cpu_data_o_t;
+  db_b_i : in  cpu_data_i_t
+  );
+end bussizem;
+
+architecture rtl of bussizem is
+  type half_reg_t is record
+    db_b_o : cpu_data_o_t;
+    db_b_i : cpu_data_i_t;
+    byte_cnt : std_logic_vector(1 downto 0);
+    ack_mg : std_logic;
+    write_last_dt : std_logic; -- non compatible extention to cpu_data_o;
+  end record;
+  type norm_reg_t is record
+    ack : std_logic;
+    dummy1 : std_logic;
+  end record;
+  constant HALF_REG_RESET : half_reg_t :=
+    ( db_b_o        => NULL_DATA_O, 
+      db_b_i        => (ack => '0', d => (others => '0')),
+      byte_cnt      => "00",
+      ack_mg        => '0',
+      write_last_dt => '0');
+  constant NORM_REG_RESET : norm_reg_t:=
+    ( '0', '0' );
+
+  register variable this_h : half_reg_t reset := HALF_REG_RESET;
+  register variable this   : norm_reg_t reset := NORM_REG_RESET;
+
+begin
+  p1 : process (this_h,this, db_a_o, db_b_i )
+    register this_h when clk_half = '1' and clk_half'event reset when rst = '1';
+    register this   when clk      = '1' and clk'event reset when rst = '1';
+
+  variable nx_half : half_reg_t;
+  variable nx      : norm_reg_t;
+  variable tmp2b   : std_logic_vector(1 downto 0);
+  variable tmp2b2  : std_logic_vector(1 downto 0);
+  variable tmpii   : integer range 0 to 31;
+  variable tmpij   : integer range 0 to 15;
+  begin -- begin of process
+
+    -- read data 
+    -- initial value ---------------
+                         nx_half.db_b_i.d := this_h.db_b_i.d;
+    -- initial value end -----------
+    if(this_h.db_b_o.en = '1') then
+      if(this_h.db_b_o.wr = '0') then
+        if(db_b_i.ack = '1') then
+          tmpii := 8 * (3 - to_integer(unsigned(this_h.byte_cnt)));
+             nx_half.db_b_i.d((tmpii + 7) downto tmpii) :=
+                     db_b_i.d(         7  downto     0) ;
+        end if;
+      else -- write
+             nx_half.db_b_i.d                           := (others => '0');
+                                                -- 32b clear make wave simpler
+      end if;
+    end if;
+
+    -- clock_domain clk_half
+    --  byte counter ----
+    --- initial value start --------------
+                                          tmp2b := std_logic_vector(
+                                                unsigned(this_h.byte_cnt) + 1);
+    --- initial value end   --------------
+    if   (this_h.db_b_o.en = '0') then    tmp2b := "00";
+    elsif(db_b_i.ack = '0')       then    tmp2b := this_h.byte_cnt;
+    elsif(this_h.db_b_o.wr = '0') then -- | -- same as initial value
+    else
+      case db_a_o.we is
+        when x"8" | x"4" | x"2" | x"1" => tmp2b := "00";
+        when x"c" | x"3" =>               tmp2b :=      this_h.byte_cnt(1)  &
+                                                   (not this_h.byte_cnt(0)) ;
+        when others =>                 -- | -- same as initial value
+      end case;                        -- |
+    end if;                            -- V
+    nx_half.byte_cnt :=                   tmp2b;
+
+    -- initial value ----------------------------
+                                               nx_half.ack_mg := '0';
+    -- initial value ----------------------------
+    if(this_h.db_b_o.en = '1') and
+      (db_b_i.ack = '1') then
+    -- read finish
+      if   (this_h.db_b_o.wr = '0') and
+           (this_h.byte_cnt = "11") then       nx_half.ack_mg := '1';
+      elsif(this_h.db_b_o.wr = '1') then
+        case db_a_o.we is
+          when x"8" | x"4" | x"2" | x"1" =>    nx_half.ack_mg := '1';
+          when x"c" | x"3" =>
+               if(this_h.byte_cnt = "01") then nx_half.ack_mg := '1'; end if;
+          when others =>
+               if(this_h.byte_cnt = "11") then nx_half.ack_mg := '1'; end if;
+        end case;
+      end if;
+    end if;
+
+    -- db_b_o approximate value coping input  -------------------  
+    nx_half.db_b_o.en    := db_a_o.en   ;
+    nx_half.db_b_o.a     := db_a_o.a    ;
+    nx_half.db_b_o.wr    := db_a_o.wr   ;
+    nx_half.db_b_o.rd    := db_a_o.rd   ;
+    -- adjust en, rd, wr
+    if(nx_half.ack_mg = '1') then nx_half.db_b_o.en := '0';
+                                  nx_half.db_b_o.rd := '0';
+                                  nx_half.db_b_o.wr := '0';
+    end if;
+
+    -- adjust a(1:0) (overwrite nx_half..)
+    -- initial value - ( = capture input adr) -----
+                                    tmp2b2 := db_a_o.a(1 downto 0);
+    -- initial value end --------------------------
+    if(db_a_o.wr = '0') then -- read
+      if   (this_h.db_b_o.en = '0') then
+                                    tmp2b2 := "00";
+      elsif(db_b_i.ack = '0') then  tmp2b2 := this_h.db_b_o.a(1 downto 0);
+      else                          tmp2b2 := nx_half.byte_cnt; end if;
+    else -- write
+      if   (this_h.db_b_o.en = '0') then -- -> use initial value
+      elsif(db_b_i.ack = '0') then  tmp2b2 := this_h.db_b_o.a(1 downto 0);
+      else case db_a_o.we is
+             when x"8" | x"4" |
+                  x"2" | x"1" =>    -- -> use initial value
+             when x"c" | x"3" =>    tmp2b2(0) := nx_half.byte_cnt(0); -- 1b upd
+             when others      =>    tmp2b2 := nx_half.byte_cnt;
+           end case;             -- |
+      end if;                    -- |
+    end if;                      -- V
+    nx_half.db_b_o.a(1 downto 0) := tmp2b2;
+
+    -- write last data (non compatible extension to cpu_data_o_t)
+    -- initial value -----------
+                                           nx_half.write_last_dt := '0';
+    -- initial value -----------
+    if(nx_half.db_b_o.en = '1') and
+      (db_a_o.wr = '1') then
+      case db_a_o.we is
+        when x"8" | x"4" | x"2" | x"1" =>  nx_half.write_last_dt := '1';
+        when x"c" | x"3" =>
+          if(nx_half.byte_cnt = "01") then nx_half.write_last_dt := '1';
+          end if;
+        when others      =>    
+          if(nx_half.byte_cnt = "11") then nx_half.write_last_dt := '1';
+          end if;
+      end case;
+    else                                   nx_half.write_last_dt := '0';
+    end if;
+    nx_half.db_b_o.we(3) := nx_half.write_last_dt ;
+
+    -- write data 32 -> 8 mux
+    if(nx_half.byte_cnt(0) = '0') then   tmpij := 8;
+    else                                 tmpij := 0; end if;
+
+    case db_a_o.we is                 -- |
+      when x"c"        =>  tmpii := 16 + tmpij;
+      when x"3"        =>  tmpii :=      tmpij;
+      when x"8" | x"4" |                    
+           x"2" | x"1" =>  tmpii :=  8 * (3 - to_integer(
+                                              unsigned(db_a_o.a(1 downto 0))));
+      when others      =>  tmpii :=  8 * (3 - to_integer(
+                                                  unsigned(nx_half.byte_cnt)));
+    end case;           -- |
+
+    if(db_a_o.wr = '1') then
+         nx_half.db_b_o.d(         7  downto     0) :=
+                 db_a_o.d((tmpii + 7) downto tmpii);
+    else nx_half.db_b_o.d(         7  downto     0) := x"00"; end if;
+    nx_half.db_b_o.d     (        31  downto     8) := (others => '0');
+
+    -- fix unused db_b_o output (just to clarify)
+    nx_half.db_b_o.we(2 downto 0) := "000";
+
+    -- clock_domain clk
+    nx.ack := this_h.ack_mg;
+
+    -- ff substitute (clk_half domain)
+    this_h           := nx_half       ; -- four members
+    -- ff substitute (clk      domain) 
+    this.ack         := nx.ack;
+    -- ff substitute end
+  end process;
+  -- output drive
+  db_b_o     <= this_h'register.db_b_o;
+
+  db_a_i.ack <= this_h'register.ack_mg and (not this'register.ack);
+  db_a_i.d   <= this_h'register.db_b_i.d when 
+                this_h'register.ack_mg = '1' else (others => '0');
+
+end rtl;

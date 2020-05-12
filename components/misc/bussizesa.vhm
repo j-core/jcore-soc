@@ -1,0 +1,237 @@
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+use work.cpu2j0_pack.all;
+entity bussizesa is port (
+  rst      : in std_logic;
+  clk      : in   std_logic;
+  clk_half : in   std_logic;
+  -- master port                  (clk_half)
+  db_a_o : in  cpu_data_o_t;
+  db_a_i : out cpu_data_i_t;
+  -- slave port                   (clk)
+  db_b_o : out cpu_data_o_t;
+  db_b_i : in  cpu_data_i_t
+  );
+end bussizesa;
+
+--- H/W spec ------
+-- this bussizesa requires non-compatible (to standard data bus)
+-- point = db_a_o.we encoding
+-- we(3)=1 write data last
+-- we(3)=0 write data non-last,   memo db_b_o.we is normal type.
+-------------------
+-- non refering signals:  db_a_o.d(31-8), db_a_o.we(2-0)
+
+architecture rtl of bussizesa is
+  type half_reg_t is record
+    db_a_o : cpu_data_o_t;
+    read_ack  : std_logic_vector(4 downto 0);
+    write_ack : std_logic;
+    write_cyclehd : std_logic;
+  end record;
+  type norm_reg_t is record
+    read_dt : std_logic_vector(31 downto 0);
+    ack : std_logic;
+    dummy1 : std_logic;
+    read_ack_state : std_logic;
+    read_ack_state_1del : std_logic;
+    write_cycle : std_logic;
+    write_cyclehd : std_logic;
+  end record;
+  constant HALF_REG_RESET : half_reg_t :=
+    ( db_a_o        => NULL_DATA_O,
+      read_ack      => (others => '0'),
+      write_ack     => '0',
+      write_cyclehd => '0'  );
+  constant NORM_REG_RESET : norm_reg_t:=
+    ( read_dt        => (others => '0'),
+      ack            => '0', 
+      dummy1         => '0',
+      read_ack_state => '0',
+      read_ack_state_1del => '0',
+      write_cycle    => '0',
+      write_cyclehd  => '0'     );
+
+  register variable this_h : half_reg_t reset := HALF_REG_RESET;
+  register variable this   : norm_reg_t reset := NORM_REG_RESET;
+  signal db_b_o_rd : std_logic;
+  signal db_b_o_wr : std_logic;
+  signal db_b_o_we_dec : std_logic_vector(3 downto 0);
+
+begin
+  p1 : process (this_h,this, db_a_o, db_b_i )
+    register this_h when clk_half = '1' and clk_half'event reset when rst = '1';
+    register this   when clk      = '1' and clk'event reset when rst = '1';
+
+  variable nx_half : half_reg_t;
+  variable nx      : norm_reg_t;
+  variable tmpii   : integer range 0 to 31;
+  variable tmpiw   : integer range 0 to 31;
+  variable tmpiw2  : integer range 0 to  3;
+  begin -- begin of process
+
+
+    -- part 1. distribute 2-cycle ack to r/w (nx-clk_half) --------------------
+    -- initial value ---------
+           nx_half.read_ack(0) := '0';
+           nx_half.write_ack   := '0';
+    -- initial value end -----
+    if ((this.ack = '1') or (db_b_i.ack = '1')) then
+      if(db_a_o.wr = '0') then
+           nx_half.read_ack(0) := '1';
+      else nx_half.write_ack   := '1'; end if;
+    end if;
+
+    nx_half.read_ack(4 downto 1) := this_h.read_ack(3 downto 0) ;
+
+    -- part 2. extract write-group final data (nx-clk_half) -------------------
+    if(db_a_o.en    = '1') and
+      (db_a_o.wr    = '1') and
+      (db_a_o.we(3) = '1') then nx_half.write_cyclehd := '1';
+    else                        nx_half.write_cyclehd := '0'; end if;
+
+    -- part 3. read ack state machine (nx-clk) --------------------------------
+    if   ((db_b_i.ack = '1') or (this.ack = '1')) and
+         ( this_h.db_a_o.wr = '0') then 
+         nx.read_ack_state := '1';
+    elsif( this_h.read_ack /= "00000") and
+         (nx_half.read_ack  = "00000") then
+         nx.read_ack_state := '0';
+    else nx.read_ack_state := this.read_ack_state;
+    end if;
+
+
+    -- part 4. process incoming access paramteres (nx-clk_half) ---------------
+    -- part 4.1 read case data mux control
+    if(this_h.read_ack = "00000") then tmpii := 24;
+    elsif(db_a_o.a(1 downto 0) /= "11") then
+                                       tmpii :=  8 *
+                              (2 - to_integer(unsigned(db_a_o.a(1 downto 0))));
+                                                   -- 16, 8, 0
+    else                               tmpii := 24;
+    end if;
+
+    -- part 4.2
+    nx_half.db_a_o := db_a_o; -- approximate group copy
+                              -- .d/.we is overwritten (in part 4.3)
+    -- part 4.3
+    -- read/write data is not straight copy
+    tmpiw2 :=  1 * (3 - to_integer(unsigned(db_a_o.a(1 downto 0))));
+    tmpiw  :=  8 * tmpiw2;
+    -- memo: this_h.db_a_o.d(7 downto 0) holds read / write dual
+    --       direction data (these two cases do not happern in same time)
+    -- initial value  -------------------
+                                    nx_half.db_a_o.d  := this_h.db_a_o.d;
+                                    nx_half.db_a_o.we := this_h.db_a_o.we;
+    -- initial value end ----------------
+    if   (this_h.write_ack = '1') then
+                                    nx_half.db_a_o.we         := x"0";
+      -- write data
+    elsif(db_a_o.en = '1') and (db_a_o.wr = '1') then
+                                    nx_half.db_a_o.d(tmpiw + 7 downto tmpiw) := 
+                                            db_a_o.d(        7 downto     0) ;
+                                       -- expand 8b -> 32b
+                                    nx_half.db_a_o.we(tmpiw2) := '1';
+      -- read data
+    elsif(this_h.db_a_o.en = '1') and
+         (this_h.db_a_o.wr = '0') then
+      if   (db_b_i.ack = '0') then -- in-port -> clk-ff -> clk_half-ff
+                                    nx_half.db_a_o.d(7 downto 0) := 
+                                      this.read_dt(tmpii + 7 downto tmpii);
+      else -- in-prt -> clk_half-ff, 
+           -- skip (fast) clk domain
+                                    nx_half.db_a_o.d(7 downto 0) := 
+                                      db_b_i.d(31 downto 24);
+      end if;
+    end if;
+
+    -- part 5. write_cycle (nx-clk) -------------------------------------------
+    if(this_h.write_cyclehd = '1') and
+      (this.write_cyclehd = '0') and
+      (db_b_i.ack = '0') then nx.write_cycle := '1';
+    elsif(db_b_i.ack = '1') then
+                              nx.write_cycle := '0';
+    else                      nx.write_cycle := this.write_cycle;
+    end if;
+    nx.write_cyclehd := this_h.write_cyclehd; -- this_h -> nx_h. eval. part 3
+
+    -- part 6. read data (nx-clk) ---------------------------------------------
+    if(this_h.db_a_o.en = '1') and
+      (this_h.db_a_o.wr = '0') and
+      (db_b_i.ack = '1') and
+      (this.read_ack_state = '0') and
+      (this.read_ack_state_1del = '0') then nx.read_dt := db_b_i.d;
+    else                                    nx.read_dt := this.read_dt;
+    end if;
+
+    -- part 7 ff substitute (clk_half domain) ---------------------------------
+    this_h                   := nx_half;
+
+    -- part 8 ff substitute (clk domain) --------------------------------------
+    -- ff substitute (clk      domain, input->this) 
+    this.ack                 := db_b_i.ack;
+    -- ff substitute (clk      domain, this->this) 
+    this.read_ack_state_1del := this.read_ack_state;
+    -- ff substitute (clk      domain, nx->this) 
+    this.read_ack_state      := nx.read_ack_state;
+    this.read_dt             := nx.read_dt;
+    this.write_cycle         := nx.write_cycle;
+    this.write_cyclehd       := nx.write_cyclehd;
+    -- ff substitute end
+  end process;
+
+  -- part 9   output drive ----------------------------------------------------
+  -- part 9.1 control 
+  -- preparation - common signal
+  db_b_o_rd <= (      this_h'register.db_a_o.en     and
+                 (not this_h'register.db_a_o.wr)    and
+                 (not   this'register.read_ack_state) and
+                 (not   this'register.read_ack_state_1del));
+  db_b_o_wr <= (      this_h'register.write_cyclehd and
+                 (not   this'register.write_cyclehd)) or
+                        this'register.write_cycle;
+  db_b_o_we_dec <=    this_h'register.db_a_o.we;
+  -- common signal end
+  db_b_o.wr  <= db_b_o_wr;
+  db_b_o.rd  <= db_b_o_rd;
+  db_b_o.en  <= db_b_o_rd or db_b_o_wr;
+  db_b_o.we  <= db_b_o_we_dec when (db_b_o_wr = '1') else
+                x"0";
+
+  db_b_o.a(31 downto 2) <= this_h'register.db_a_o.a(31 downto 2);
+
+  -- part 9.2 slave address data
+  -- address {(00), (i0), (ii), i=incoming address} ----------
+  db_b_o.a(1 downto 0) <= 
+              -- read case
+              "00"                                 when (db_b_o_wr = '0')
+                                                   else 
+              -- write cases
+              this_h'register.db_a_o.a(1 downto 0) when
+                         ((db_b_o_we_dec  = x"8") or (db_b_o_we_dec  = x"4") or
+                          (db_b_o_we_dec  = x"2") or (db_b_o_we_dec  = x"1"))
+                                                   else
+              (this_h'register.db_a_o.a(1) & '0')  when
+                        ((db_b_o_we_dec  = x"c") or (db_b_o_we_dec  = x"3")) 
+                                                   else
+              "00";
+
+  db_b_o.d   <= this_h'register.db_a_o.d;
+ 
+  -- part 9.3 db_a_i return (input must be this_h registers)
+  db_a_i.ack <= -- ack(1/3) suquence return (read) -------------------
+                '1' when
+                  (this_h'register.read_ack(3 downto 0) /= x"0") else
+                -- ack(2/3) 0-wait return (write non-last data) ------
+                db_a_o.en when
+                  ((db_a_o.wr = '1') and (db_a_o.we(3) = '0')) else
+                -- ack(3/3) sequence return (write last data) -------
+                this_h'register.write_ack;
+  db_a_i.d( 7 downto 0) <=   this_h'register.db_a_o.d(7 downto 0) when
+                            (this_h'register.read_ack(3 downto 0) /= x"0") else
+                           x"00"; -- x00 is for clean view
+  db_a_i.d(31 downto 8) <= x"000000" ;
+
+end rtl;

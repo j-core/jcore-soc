@@ -26,7 +26,7 @@ entity uartlitedb is
 -- synopsys translate_off
   group local_sigs : local_ports(rx,tx);
 -- synopsys translate_on
-  attribute sei_port_irq of int : signal is true;
+  attribute soc_port_irq of int : signal is true;
 end;
 
 architecture arch of uartlitedb is

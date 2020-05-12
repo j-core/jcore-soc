@@ -1,0 +1,14 @@
+BEGIN { state = 0; }
+{
+  print $0;
+  if     (($1 == "clk_sys") && ($2 == ":") && ($3 == "in")) {
+    print "        clk_sys_0_5x : in std_logic;";
+  }
+  else if(($1 == "devices") && ($3 == "entity")) {
+    state = 1;
+  }
+  else if((state == 1) && ($1 == "clk_sys")) {
+    print "            clk_sys_0_5x => clk_sys_0_5x,";
+    state = 2;
+  }
+}

@@ -9,6 +9,8 @@ use work.misc_pack.all;
 use work.config.all;
 
 entity cpu_core is
+  generic ( 
+    COPRO_DECODE : boolean := true);
   port (
     clk : in std_logic;
     rst : in std_logic;
@@ -27,7 +29,10 @@ entity cpu_core is
     event_i : in  cpu_event_i_t;
 
     data_master_en : out std_logic;
-    data_master_ack : out std_logic
+    data_master_ack : out std_logic;
+
+    copro_o : out cop_o_t;
+    copro_i : in  cop_i_t
     );
 end entity;
 
@@ -44,6 +49,7 @@ architecture arch of cpu_core is
 
 begin
   u_cpu : cpu
+    generic map ( COPRO_DECODE => COPRO_DECODE )
     port map (
       clk => clk,
       rst => rst,
@@ -55,7 +61,9 @@ begin
       debug_o => debug_o,
       debug_i => debug_i,
       event_o => event_o,
-      event_i => event_i
+      event_i => event_i,
+      cop_o => copro_o,
+      cop_i => copro_i
     );
 
   -- select instruction bus device based on instruction address

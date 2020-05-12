@@ -1,0 +1,66 @@
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+use work.ring_bus_pack.all;
+
+#define RBUS_NODE_ENTITY ADD_SUFFIX(rbus_node_)
+#define RBUS_WORD ADD_SUFFIX(rbus_word_)
+
+entity RBUS_NODE_ENTITY is port (
+  clk : in std_logic;
+  rst : in std_logic;
+
+  -- connections to predesessor in ring bus
+  bus_i : in RBUS_WORD;
+  stall_o : out std_logic;
+
+  -- connections to successor in ring bus
+  bus_o : out RBUS_WORD;
+  stall_i : in std_logic;
+
+  -- connections to peripheral device
+  dev_o : out ADD_SUFFIX(rbus_dev_i_);
+  dev_i : in  ADD_SUFFIX(rbus_dev_o_));
+end entity;
+
+architecture arch of RBUS_NODE_ENTITY is
+  register variable this : ADD_SUFFIX(rbus_node_reg_) reset := ADD_SUFFIX(RBUS_NODE_RESET_);
+
+begin
+
+  p : process(this, bus_i, stall_i, dev_i)
+    register this when clk='1' and clk'event reset when rst='1';
+    variable scratch : ADD_SUFFIX(rbus_scratch_);
+    variable inputs  : ADD_SUFFIX(rbus_inputs_);
+    variable outputs : ADD_SUFFIX(rbus_outputs_);
+  begin
+    assert this.bus_o.stall = '1' or can_discard(this.stalled)
+      report "ring bus node contains queued word when not stalling predecessor"
+      severity warning;
+
+    -- Step 1) based on bus inputs (bus_i and stall_i) and current mode, set up
+    -- combinatorial outputs to the device.
+
+    rbus_node_inputs(this, bus_i, stall_i, scratch, inputs);
+    this.dev_o.en := inputs.en;
+    this.dev_o.word := inputs.word;
+
+    -- instead of relying on combinatorial outputs to and inputs from device,
+    -- could have device logic here
+
+    -- Step 2) based on bus inputs, current mode, and combinatorial inputs from
+    -- device, set new mode and bus outputs (bus_o and stall_o) and set
+    -- combinartorial ACK back to device
+
+    outputs.mode := dev_i.mode;
+    outputs.word := dev_i.word;
+    rbus_node_outputs(this, stall_i, scratch, outputs, this.dev_o.ack);
+  end process;
+
+  stall_o <= this'register.bus_o.stall;
+  bus_o <= this'register.bus_o.word;
+
+  dev_o <= this'combinatorial.dev_o;
+
+end arch;

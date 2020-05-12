@@ -1,0 +1,5 @@
+awk_p02_01_wordack : generates word_ack_gen.vhd
+awk_p02_02_devices : generates devices.vhd
+awk_p02_03_soc     : generates soc.vhd
+awk_p02_04_pad_r   : generates pad_ring.vhd
+awk_p02_05_bytebus : generates byte_bus (*_slave_process.vhd)

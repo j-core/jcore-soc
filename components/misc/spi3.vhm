@@ -1,0 +1,937 @@
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+use work.cpu2j0_pack.all;
+use work.dma_pack.all;
+use work.attr_pack.all;
+
+entity spi3 is
+  generic (
+    NUM_CS   : integer range 2 to 5         := 2;
+    CLK_FREQ : real range 25.0e6 to 125.0e6;
+    -- CPOL controls clock polarity. If '0' then clock idles high, else if '1'
+    -- then clock idles low.
+
+    LOW_SPEED_FREQ  : real := 400.0e3;
+    HIGH_SPEED_FREQ : real := 25.0e6
+    );
+  port (
+    clk     : in  std_logic;
+    rst     : in  std_logic;
+    db_i    : in  cpu_data_o_t;
+    db_o    : out cpu_data_i_t;
+    spi_clk : out std_logic;
+    cs      : out std_logic_vector(NUM_CS - 1 downto 0);
+    miso    : in  std_logic;
+    mosi    : out std_logic;
+    actp_o  : in  actp_o_t;
+    actp_i  : out actp_i_t;
+    int     : out std_logic );
+
+  attribute soc_port_local_name of spi_clk : signal is "clk";
+  attribute soc_port_irq of int : signal is true;
+end spi3;
+
+architecture arch of spi3 is
+
+  type spi3_statem_t is ( IDLE,
+  G1DTLOOPRE, G2EPIRE, G3PROSE, G4DTLOOPSE,
+  C1MEMCRC,
+  S1PARAM1, S2PARAM2, S3CMDW_ST, S4CMD_RESP, S5RWDATAMK, S6BLOCKL, 
+  F1DMA, F2REPE, F3DB, F4STOPMULTI, F5WDRESP, F6CRESP, F7DB, F8DESTI );
+  -- type member first character
+  -- G(1-4) : general dma ,
+  -- C(1  ) : memory crc
+  -- S(1-6) : sd-card dma main, F(1-8) : sd-card dma finalize
+
+  type spi3_stateb_t is ( IDLE, BUSYPOLL1, WAITDMW, WRITED, WRITEC, BUSYPOLL2, 
+  WAITDMR, READD );
+
+  type crc_statewd_t is ( IDLE, WAITDMR, OPER );
+
+-- begin of memo sd-dma finish processing
+-- SD-CMD17 BLOCK* -> F1 -> F2 -> F3 -> F8
+-- SD-CMD18 BLOCK* -> F1 -> F2 -> F4 -> F6 ->F7 ->F8 
+-- SD-CMD24 BLOCK* -> F2 -> F4 -> F5 -> F6 ->F7 ->F8 
+-- end of memo sd-dma finish processing
+
+-- 1byte loop
+-- block read / block write (same)
+--      (1) piobusy-flg check   
+--      (2) data-reg    write
+--      (3) ctrl-reg    write
+--      (4) piobusy-flg check   
+--      (5) data-reg    read
+
+  type spi3_reg_t is record
+    statem         : spi3_statem_t; -- main state
+    stateb         : spi3_stateb_t; -- 1-byte processing state
+    statem_1del    : spi3_statem_t; -- main state, one cycle delay
+    statewd        : crc_statewd_t;
+    actp_i         : actp_i_t;
+    sdbytec        : std_logic_vector( 9 downto  0);
+    crccw          : std_logic_vector( 7 downto  0); -- 1 ovf + 7 (128 word) = 8 
+    crccb          : std_logic_vector( 4 downto  0); -- 5 (32 bit)
+    db_i_aint      : cpu_data_o_t;
+    ddr_rready     : std_logic;
+    ddr_wready     : std_logic;
+    first_byte_g   : std_logic;
+    int_out        : std_logic;
+    sdmultib_ctr   : std_logic_vector( 7 downto  0);
+    r4_sendcrcen   : std_logic;
+    r5_busy        : std_logic;
+    r6_speed       : std_logic_vector( 4 downto  0);
+    r6_cpha        : std_logic;
+    r6_cpol        : std_logic;
+    r6_int         : std_logic;
+    r6_count       : std_logic_vector(23 downto  0);
+    r7_spdata      : std_logic_vector( 7 downto  0);
+    r7_crcin       : std_logic_vector(31 downto  0);
+--  r8_param_norm  : std_logic_vector(31 downto  0);
+--  r8_param_prev  : std_logic_vector(31 downto  0);
+    r9_dmchm_crc   : std_logic_vector( 5 downto  0);
+    r9_dmchp_sen   : std_logic_vector( 5 downto  0);
+    r9_dmchd_rec   : std_logic_vector( 5 downto  0);
+    r10_mcrc_a     : std_logic_vector( 1 downto  0);
+    r11_crcd       : std_logic_vector(15 downto  0);
+--  r10_wdresp     : std_logic_vector( 7 downto  0);
+--  r14_wdsum      : std_logic_vector(19 downto  0);
+    spi2_usem1   : std_logic;
+    spi2_ack       : std_logic;
+    sdca_cmd4      : std_logic_vector( 3 downto 0);
+    stateb_ack     : std_logic;
+    stateb_en      : std_logic;
+    statewd_ack    : std_logic;
+    statewd_en     : std_logic;
+  end record;
+
+  -- choose one of two start --------------------------------------------------
+  -- block_lenght for RTL sim (32B = 8w)                    ......+...
+--constant SDBLK_LENGTH : std_logic_vector(9 downto 0) :=  "0000100000";
+  -- block_lenght for actual (fpga, asic) (512B = 128w)     +.........
+  constant SDBLK_LENGTH : std_logic_vector(9 downto 0) :=  "1000000000";
+  -- choose one of two end ----------------------------------------------------
+
+  constant SPI3_REG_RESET : spi3_reg_t := (
+    IDLE,              -- statem
+    IDLE,              -- stateb
+    IDLE,              -- statem_1del
+    IDLE,              -- statewd
+    (req => (others => '0')), -- actp_i
+    (others => '0'),   -- sdbytec
+    (others => '0'),   -- crccw           ( 7 downto  0);
+    (others => '0'),   -- crccb           ( 4 downto  0);
+    NULL_DATA_O,       -- db_i_aint
+    '0',               -- ddr_rready
+    '0',               -- ddr_wready
+    '0',               -- first_byte_g
+    '0',               -- int_out
+    (others => '0'),   -- sdmultib_ctr
+    '0',               -- r4_sendcrcen
+    '0',               -- r5_busy
+    b"11110" ,         -- r6_speed        ( 4 downto  0);
+    '0',               -- r6_cpha
+    '0',               -- r6_cpol
+    '0',               -- r6_int
+    (others => '0'),   -- r6_count        (23 downto  0);
+    (others => '0'),   -- r7_spdata       ( 7 downto  0);
+    (others => '0'),   -- r7_crcin        (31 downto  0);
+--  (others => '0'),   -- r8_param_norm   (31 downto  0);
+--  (others => '0'),   -- r8_param_prev   (31 downto  0);
+    (others => '0'),   -- r9_dmchm_crc    ( 5 downto  0);
+    (others => '0'),   -- r9_dmchp_sen    ( 5 downto  0);
+    (others => '0'),   -- r9_dmchd_rec    ( 5 downto  0);
+    (others => '0'),   -- r10_mcrc_a      ( 1 downto  0);
+    (others => '0'),   -- r11_crcd        (15 downto  0);
+--  (others => '0'),   -- r10_wdresp      ( 7 downto  0);
+--  (others => '0'),   -- r14_wdsum       (19 downto  0);
+    '1',               -- spi2_usem1
+    '0',               -- spi2_ack
+    (others => '0'),   -- sdca_cmd4        ( 3 downto 0);
+    '0',               -- stateb_ack
+    '0',               -- stateb_en
+    '0',               -- statewd_ack
+    '0'                -- statewd_en
+  ); 
+    
+  register variable this : spi3_reg_t reset := SPI3_REG_RESET;
+
+  signal piobusy            : std_logic;
+  signal db_i_spi2          : cpu_data_o_t;
+  signal db_o_spi2          : cpu_data_i_t;
+
+begin
+  p0 : process (this, db_i, actp_o, db_o_spi2, piobusy )
+    register this when clk = '1' and clk'event reset when rst = '1';
+
+    variable ack_m1       : std_logic;
+    variable ack_m2       : std_logic;
+    variable ack_m2_rd    : std_logic;
+    variable actp_d_rec_ack : std_logic;
+    variable actp_p_sen_ack : std_logic;
+    variable crcd_memalign  : std_logic;
+    variable db_o_ack     : std_logic;
+    variable db_o_d       : std_logic_vector(31 downto  0);
+    variable dmareq_s6bl_rw : std_logic;
+    variable crccwlimita  : std_logic_vector( 7 downto  0);
+    variable crccwlimitb  : std_logic_vector( 7 downto  0);
+    variable nx           : spi3_reg_t;
+    variable soft_reset_r4cmd  : std_logic;
+    variable state_grp_g  : std_logic;
+    variable state_grp_sf : std_logic;
+    variable tmp2b        : std_logic_vector( 1 downto  0);
+    variable tmp4b        : std_logic_vector( 3 downto  0);
+    variable tmp5b        : std_logic_vector( 4 downto  0);
+    variable tmp4b_2      : std_logic_vector( 3 downto  0);
+    variable tmp8b        : std_logic_vector( 7 downto  0);
+    variable tmp10b       : std_logic_vector( 9 downto  0);
+--  variable tmp32b       : std_logic_vector(31 downto  0);
+    variable tmpi         : integer range 0 to 31;
+    variable write_r4cmdsd  : std_logic; -- start sd-card dma
+    variable write_r4cmdcr  : std_logic; -- start memory  crc
+    variable write_r4cmdre  : std_logic; -- start geneal  dma (receive)
+    variable write_r4cmdse  : std_logic; -- start geneal  dma (send)
+  begin -- begin of process body
+
+  -- part 0 : constant number conversion
+  tmp10b      := SDBLK_LENGTH;
+  crccwlimita := std_logic_vector(unsigned(tmp10b(9 downto 2)) - 1);
+  crccwlimitb :=                           tmp10b(9 downto 2);
+
+  -- part 1: register write
+  -- initial value start
+                                          soft_reset_r4cmd := '0';
+                                          write_r4cmdsd := '0';
+                                          write_r4cmdcr := '0';
+                                          write_r4cmdre := '0';
+                                          write_r4cmdse := '0';
+                 nx.r4_sendcrcen  := this.r4_sendcrcen ;
+                 nx.r6_speed      := this.r6_speed    ;
+                 nx.r6_cpha       := this.r6_cpha     ;
+                 nx.r6_cpol       := this.r6_cpol     ;
+                 nx.r6_int        := this.r6_int      ;
+                 nx.r6_count      := this.r6_count    ;
+                 nx.r7_spdata     := this.r7_spdata   ;
+                 nx.r7_crcin      := this.r7_crcin    ;
+--               nx.r8_param_norm := this.r8_param_norm  ;
+--               nx.r8_param_prev := this.r8_param_prev;
+                 nx.r9_dmchm_crc  := this.r9_dmchm_crc   ;
+                 nx.r9_dmchp_sen  := this.r9_dmchp_sen   ;
+                 nx.r9_dmchd_rec  := this.r9_dmchd_rec   ;
+                 nx.r10_mcrc_a    := this.r10_mcrc_a   ;
+--               nx.r10_wdresp    := this.r10_wdresp   ;
+--               nx.r14_wdsum     := this.r14_wdsum    ;
+  -- initial value end
+  if(db_i.en = '1') and (db_i.wr = '1') then
+    case db_i.a(5 downto 2) is
+    when x"4" => if(db_i.d(8) = '1') then write_r4cmdsd    := '1'; end if;
+                 if(db_i.d(4) = '1') then write_r4cmdcr    := '1'; end if;
+                 if(db_i.d(1) = '1') then write_r4cmdse    := '1'; end if;
+                 if(db_i.d(0) = '1') then write_r4cmdre    := '1'; end if;
+                 if(db_i.d(8) = '0') and
+                   (db_i.d(4) = '0') and
+                   (db_i.d(1 downto 0) = "00") then
+                                          soft_reset_r4cmd := '1'; end if;
+                 nx.r4_sendcrcen := db_i.d(5);
+    when x"5" => -- r5_busy read only
+    when x"6" => nx.r6_speed    := db_i.d(31 downto 27);
+                 nx.r6_cpha     := db_i.d(26);
+                 nx.r6_cpol     := db_i.d(25);
+                 nx.r6_int      := db_i.d(24);
+                 nx.r6_count    := db_i.d(23 downto  0);
+    when x"7" => 
+      case db_i.a(1 downto 0) is
+      when "00"   => tmpi := 24;
+      when "01"   => tmpi := 16;
+      when "10"   => tmpi :=  8;
+      when others => tmpi :=  0;
+      end case;
+                 nx.r7_spdata   := db_i.d((tmpi + 7) downto tmpi);
+                 if(this.statem /= G4DTLOOPSE) then
+                     nx.r7_crcin    := db_i.d; end if;
+--  when x"8" => nx.r8_param_norm := db_i.d;
+--               nx.r8_param_prev := this.r8_param_norm;
+    when x"9" => nx.r9_dmchm_crc  := db_i.d(21 downto 16);
+                 nx.r9_dmchp_sen  := db_i.d(13 downto  8);
+                 nx.r9_dmchd_rec  := db_i.d( 5 downto  0);
+    when x"a" => nx.r10_mcrc_a    := db_i.d( 1 downto  0);
+    -- when x"b" r11 crc data is read only
+--  when x"a" => nx.r10_wdresp  := db_i.d( 7 downto  0);
+--  when x"e" => nx.r14_wdsum   := db_i.d(19 downto  0);
+    when others =>
+    end case;
+    -- ack generation is part @ (read write both cases).
+  end if;
+
+
+  -- part 2: multiple block block counter 
+  if(this.statem = IDLE) then      nx.sdmultib_ctr := (others => '0');
+  else                             nx.sdmultib_ctr := this.sdmultib_ctr;
+    if
+    (this.statem = S6BLOCKL) and 
+    (this.statem_1del /= S6BLOCKL) then
+      case this.sdca_cmd4 is
+      when x"2" | x"9" =>          nx.sdmultib_ctr := std_logic_vector(unsigned(
+                                                    this.sdmultib_ctr) + 1);
+      when others      => -- keep
+      end case;
+    end if;
+  end if;
+
+  -- part 3: access arbitration for spi2 db access
+  -- m1 = cpu -> spi2 m2 = FSM -> spi2
+  -- m1 has more priority
+  if((this.spi2_usem1 = '1') or (this.spi2_ack = '1')) and
+    (((db_i.en = '1') and
+      (db_i.a(5 downto 3) = "000")) or
+     ( this.db_i_aint.en = '0')) then
+    if(db_i.a(5 downto 3) = "000") then
+               db_i_spi2                             <= db_i;
+    else       db_i_spi2                             <= NULL_DATA_O; end if;
+                         ack_m1                      := db_o_spi2.ack;
+                                ack_m2               := '0';
+                                       nx.spi2_usem1 := '1';
+  else         db_i_spi2                             <= this.db_i_aint;
+                         ack_m1                      := '0';
+                                ack_m2               := db_o_spi2.ack;
+                                       nx.spi2_usem1 := '0';
+  end if;
+  if(this.db_i_aint.wr = '0') and (ack_m2 = '1') then ack_m2_rd := '1';
+  else                                                ack_m2_rd := '0';
+  end if;
+
+  -- part 4: hold data from spi2;
+  -- state group
+  -- initial value
+                                        state_grp_g  := '0';
+                                        state_grp_sf := '0';
+  case this.statem is
+  when G1DTLOOPRE | G2EPIRE | G3PROSE | G4DTLOOPSE =>
+                                        state_grp_g  := '1';
+  when S1PARAM1 | S2PARAM2 | S3CMDW_ST | S4CMD_RESP | S5RWDATAMK | 
+       S6BLOCKL | F1DMA | F2REPE | F3DB | F4STOPMULTI | F5WDRESP | 
+       F6CRESP | F7DB | F8DESTI =>      state_grp_sf := '1';
+  when others =>
+  end case;
+
+  -- initial data r7_spdata = {this / reg-w }
+  case this.statem is
+  when S6BLOCKL =>
+    if(ack_m2_rd = '1') and
+      (this.sdca_cmd4(3) = '0') then
+                               nx.r7_spdata := db_o_spi2.d(7 downto 0);
+    elsif(this.statem_1del /= S6BLOCKL) then
+                               nx.r7_spdata := x"fe"; end if;
+  when G1DTLOOPRE | S4CMD_RESP | S5RWDATAMK | F6CRESP =>
+    if(ack_m2_rd = '1') then   nx.r7_spdata := db_o_spi2.d(7 downto 0); end if;
+  when others =>
+  end case;
+  -- initial value r10_wdresp = {this / reg-w }
+--case this.statem is
+--when F5WDRESP =>
+--  if(ack_m2_rd = '1') then   nx.r10_wdresp := db_o_spi2.d(7 downto 0); end if;
+--when others =>
+--end case;
+
+
+  -- part 5: register read
+  -- part 5.1 state observe code (for initial H/W debug)
+  case this.statem is
+  when IDLE =>                 tmp5b := '0' & x"0";
+  when S1PARAM1 =>             tmp5b := '1' & x"1";
+  when S2PARAM2 =>             tmp5b := '1' & x"2";
+  when S3CMDW_ST =>            tmp5b := '1' & x"3";
+  when S4CMD_RESP =>           tmp5b := '1' & x"4";
+  when S5RWDATAMK =>           tmp5b := '1' & x"5";
+  when S6BLOCKL =>             tmp5b := '1' & x"6";
+  when F1DMA =>                tmp5b := '1' & x"8";
+  when F2REPE =>               tmp5b := '1' & x"9";
+  when F3DB =>                 tmp5b := '1' & x"a";
+  when F4STOPMULTI =>          tmp5b := '1' & x"b";
+  when F5WDRESP =>             tmp5b := '1' & x"c";
+  when F6CRESP =>              tmp5b := '1' & x"d";
+  when F7DB =>                 tmp5b := '1' & x"e";
+  when others => -- F8DESTI 
+                               tmp5b := '1' & x"f";
+  end case;
+
+  case this.stateb is
+  when IDLE =>              tmp4b_2 := x"0" ;
+  when BUSYPOLL1 =>         tmp4b_2 := x"1" ;
+  when WAITDMW =>           tmp4b_2 := x"2" ;
+  when WRITED =>            tmp4b_2 := x"3" ;
+  when WRITEC =>            tmp4b_2 := x"4" ;
+  when BUSYPOLL2 =>         tmp4b_2 := x"5" ;
+  when WAITDMR =>           tmp4b_2 := x"6" ;
+  when others => -- READD =>
+                            tmp4b_2 := x"7";
+  end case;
+
+  -- initial value start
+                        db_o_d := (others => '0');
+  -- initial value end
+  if(db_i.en = '1') and (db_i.wr = '0') then
+    case db_i.a(5 downto 2) is
+    when x"0"        => db_o_d               := db_o_spi2.d      ;
+                        if(this.statem /= IDLE) then
+                          db_o_d( 1)         := '1'; -- permit access but
+                        end if;                      -- notice busy
+    when x"1"        => db_o_d               := db_o_spi2.d      ;
+    when x"4"        => db_o_d(5)            := this.r4_sendcrcen;
+    when x"5"        => db_o_d(0)            := this.r5_busy ;
+    when x"6"        => db_o_d(31 downto 27) := this.r6_speed    ;
+                        db_o_d(26)           := this.r6_cpha     ;
+                        db_o_d(25)           := this.r6_cpol     ;
+                        db_o_d(24)           := this.r6_int      ;
+                        db_o_d(23 downto  0) := this.r6_count    ;
+    when x"7"        => db_o_d               := this.r7_spdata   &
+                                                this.r7_spdata   &
+                                                this.r7_spdata   &
+                                                this.r7_spdata   ;
+--  when x"8"        => db_o_d               := this.r8_param_norm    ;
+    when x"9"        => db_o_d(21 downto 16) := this.r9_dmchm_crc    ;
+                        db_o_d(13 downto  8) := this.r9_dmchp_sen    ;
+                        db_o_d( 5 downto  0) := this.r9_dmchd_rec    ;
+    when x"a"        => db_o_d( 1 downto  0) := this.r10_mcrc_a  ;
+    when x"b"        => db_o_d(15 downto  0) := this.r11_crcd  ;
+--  when x"a"        => db_o_d( 7 downto  0) := this.r10_wdresp  ;
+--  when x"e"        => db_o_d(19 downto  0) := this.r14_wdsum   ;
+                         -- no en , just poll data bus
+    when x"f"        => db_o_d(20 downto 16) := tmp5b  ; -- debug observe reg
+                        db_o_d( 3 downto  0) := tmp4b_2; -- debug observe reg
+    when others => end case;     
+  end if;
+  db_o.d             <= db_o_d;
+-- line shift after nx.statem is set
+------------------
+  -- r5_busy 
+--if(nx.statem = IDLE) then nx.r5_busy           := '0';
+--else                      nx.r5_busy           := '1'; end if;
+------------------
+-- end of line shift after nx.statem is set
+
+  case db_i.a(5 downto 2) is
+    when x"0" | x"1" => db_o_ack := ack_m1;
+    when others      => db_o_ack := db_i.en ; end case;
+  db_o.ack           <= db_o_ack;
+
+  if(actp_o.t_end(6) = '1') and
+    (actp_o.t_end(5 downto 0) = this.r9_dmchd_rec) then
+                                       actp_d_rec_ack := '1';
+  else                                 actp_d_rec_ack := '0'; end if;
+  if(actp_o.t_end(6) = '1') and
+    (actp_o.t_end(5 downto 0) = this.r9_dmchp_sen) then
+                                       actp_p_sen_ack := '1';
+  else                                 actp_p_sen_ack := '0'; end if;
+
+  -- part 6: state machine
+  -- 6.1 state machine(m) - main processing state machine
+  -- initial value start
+                                          dmareq_s6bl_rw := '0';
+                                          nx.int_out    := '0';
+                                          nx.stateb_en  := '0';
+                                          nx.statewd_en := '0';
+  -- initial value end
+  case this.statem is
+  when IDLE =>
+    if   (write_r4cmdre = '1') then   nx.statem := G1DTLOOPRE;
+    elsif(write_r4cmdcr = '1') then   nx.statem := C1MEMCRC;
+    elsif(write_r4cmdse = '1') then   nx.statem := G3PROSE;
+    elsif(write_r4cmdsd = '1') then   nx.statem := S1PARAM1;
+    else                              nx.statem := IDLE; end if;
+  when G1DTLOOPRE =>
+    if(this.r6_count = x"000000") then
+      if(this.stateb_ack = '1') then  nx.statem := G2EPIRE;
+      else                            nx.statem := G1DTLOOPRE; end if;
+    else                              nx.statem := G1DTLOOPRE;
+      if (this.statem_1del /= G1DTLOOPRE) or
+         (this.stateb_ack = '1') then     nx.stateb_en := '1'; end if;
+    end if;
+  when G2EPIRE =>
+    if(actp_d_rec_ack = '1') then     nx.statem := IDLE;
+                                         if(this.r6_int = '1') then
+                                           nx.int_out := '1'; end if;
+    else                              nx.statem := G2EPIRE; end if;
+  when G3PROSE =>                     nx.statem := G4DTLOOPSE;
+  when G4DTLOOPSE =>
+    if(this.r6_count = x"000000") then
+      if(this.stateb_ack = '1') then  nx.statem := IDLE;
+                                         if(this.r6_int = '1') then
+                                           nx.int_out := '1'; end if;
+      else                            nx.statem := G4DTLOOPSE; end if;
+    else                              nx.statem := G4DTLOOPSE;
+      if (this.statem_1del /= G4DTLOOPSE) or
+         (this.stateb_ack = '1') then     nx.stateb_en := '1';
+      end if;
+    end if;
+  when C1MEMCRC =>
+    if((this.statewd_ack   = '1') and
+       (((this.r10_mcrc_a  = "00") and
+         (this.crccw       = crccwlimita)) or
+        ((this.r10_mcrc_a /= "00") and
+         (this.crccw       = crccwlimitb)))) then
+                                      nx.statem := IDLE;
+    else                              nx.statem := C1MEMCRC; end if;
+    if(this.statem_1del   /= C1MEMCRC) or
+      ((this.statewd_ack   = '1') and
+       (((this.r10_mcrc_a  = "00") and
+         (this.crccw      /= crccwlimita)) or
+        ((this.r10_mcrc_a /= "00") and
+         (this.crccw      /= crccwlimitb)))) then nx.statewd_en := '1'; end if;
+  when S1PARAM1 =>
+    if(actp_o.t_end(6) = '1') and
+      (actp_o.t_end(5 downto 0) = this.r9_dmchp_sen) then
+                                      nx.statem := S2PARAM2;
+    else                              nx.statem := S1PARAM1; end if;
+  when S2PARAM2 =>
+    if(actp_o.t_end(6) = '1') and
+      (actp_o.t_end(5 downto 0) = this.r9_dmchp_sen) then
+                                      nx.statem := S3CMDW_ST;
+                                      nx.stateb_en := '1';
+    else                              nx.statem := S2PARAM2; end if;
+  when S3CMDW_ST => 
+    if(this.stateb_ack = '1') then        nx.stateb_en := '1';
+      if(this.sdbytec(3 downto 0) = "0111") then
+                                      nx.statem := S4CMD_RESP;
+      else                            nx.statem := S3CMDW_ST; end if;
+    else                              nx.statem := S3CMDW_ST;
+    end if;
+  when S4CMD_RESP =>
+    if(this.stateb_ack = '1') and
+      (this.r7_spdata(7 downto 0) = x"00") then
+                                      nx.statem := S5RWDATAMK;
+    else                              nx.statem := S4CMD_RESP;
+      if(this.statem_1del = S3CMDW_ST) or
+        (this.stateb_ack = '1') then      nx.stateb_en := '1'; end if;
+    end if;
+  when S5RWDATAMK =>
+    case this.sdca_cmd4(3) is
+    when '0' => -- read : wait arrival of fe
+      if(this.stateb_ack = '1') and
+        (this.r7_spdata(7 downto 0) = x"fe") then
+                                      nx.statem := S6BLOCKL;
+      else                            nx.statem := S5RWDATAMK;
+        if(this.statem_1del /= S5RWDATAMK) or
+          (this.stateb_ack = '1') then      nx.stateb_en := '1'; end if;
+      end if;
+    when others => -- write : dummy bytes 10 bytes
+      if(this.stateb_ack = '1') and
+        (this.sdbytec(3 downto 0) = x"a") then
+                                      nx.statem := S6BLOCKL;
+      else                            nx.statem := S5RWDATAMK;
+        if(this.statem_1del /= S5RWDATAMK) or
+          (this.stateb_ack = '1') then      nx.stateb_en := '1'; end if;
+      end if;
+    end case;
+  when S6BLOCKL =>
+    if(this.sdbytec = (SDBLK_LENGTH or ("00" & x"02"))) then
+      if(this.stateb_ack = '1') then
+        if(this.sdca_cmd4(3) = '1') or
+          (actp_d_rec_ack = '1') then  nx.statem := F2REPE;
+        else                          nx.statem := F1DMA; end if;
+                                            -- wait last dma completion in main
+      else                            nx.statem := S6BLOCKL; end if;
+    else                              nx.statem := S6BLOCKL;
+                                          dmareq_s6bl_rw := '1';
+      if (this.statem_1del /= S6BLOCKL) or
+         (this.stateb_ack = '1') then     nx.stateb_en := '1';
+      end if;
+    end if;
+  when F1DMA => -- enter only read case
+    if(actp_d_rec_ack = '1') then      nx.statem := F2REPE;
+    else                              nx.statem := F1DMA; end if;
+                                            -- wait last dma completion in main
+  when F2REPE =>
+    case this.sdca_cmd4 is
+    when x"2" | x"9" => -- multiple
+--    if(this.sdmultib_ctr /= this.r8_param_prev( 7 downto  0)) then
+--                                     nx.statem := S5RWDATAMK;
+--    elsif(this.sdca_cmd4(3) = '0') then -- read
+         if(this.sdca_cmd4(3) = '0') then -- read
+                                       nx.statem := F4STOPMULTI;
+                                          nx.stateb_en := '1';
+      else                             nx.statem := F6CRESP; -- write
+      end if;
+    when x"1" =>   -- single block (read)
+                                       nx.statem := F3DB;
+    when others => -- single block (write)
+                                       nx.statem := F5WDRESP;
+    end case;
+  when F3DB =>
+    if(this.statem_1del /= F3DB) then     nx.stateb_en := '1'; end if;
+    if(this.stateb_ack = '1') then     nx.statem := F8DESTI;
+    else                               nx.statem := F3DB; end if;
+  when F4STOPMULTI => -- (CMD12 to finish multiple block)
+    if(this.stateb_ack = '1') then        nx.stateb_en := '1';
+      if(this.sdbytec(2 downto 0) = "110") then
+                                      nx.statem := F6CRESP;
+      else                            nx.statem := F4STOPMULTI; end if;
+    else                              nx.statem := F4STOPMULTI;
+    end if;
+  when F5WDRESP => -- just access one byte
+    if(this.stateb_ack = '1') then
+                                      nx.statem := F6CRESP;
+    else                              nx.statem := F5WDRESP;
+      if(this.statem_1del /= F5WDRESP) or
+	(this.stateb_ack = '1') then      nx.stateb_en := '1'; end if;
+    end if;
+  when F6CRESP =>
+    if(this.stateb_ack = '1') and
+      (this.r7_spdata(7 downto 0) = x"00") then
+				      nx.statem := F7DB;
+    else                              nx.statem := F6CRESP;
+      if(this.statem_1del /= F6CRESP) or
+	(this.stateb_ack = '1') then      nx.stateb_en := '1'; end if;
+    end if;
+  when F7DB =>
+    if(this.statem_1del /= F7DB) then     nx.stateb_en := '1'; end if;
+    if(this.stateb_ack = '1') then     nx.statem := F8DESTI;
+    else                               nx.statem := F7DB; end if;
+  when others => -- F8DESTI
+    if(this.r6_count(9 downto 0) = "00" & x"00") then
+				       nx.statem := IDLE;
+                                         if(this.r6_int = '1') then
+                                           nx.int_out := '1'; end if;
+    else                               nx.statem := S1PARAM1; end if;
+  end case;
+
+  -- soft reset (during debug)
+  if(soft_reset_r4cmd = '1') then nx.statem := IDLE; end if;
+  -- soft reset (during debug end)
+  -- r5_busy 
+  if(nx.statem = IDLE) then nx.r5_busy           := '0';
+  else                      nx.r5_busy           := '1'; end if;
+
+  -- part 6.2
+  -- state machine(b) - byte processing state machine
+  -- initial value start
+					   nx.stateb_ack := '0';
+				           nx.stateb := this.stateb;
+  -- initial value end
+  case this.stateb is 
+  when IDLE => 
+    if         (this.stateb_en = '1') then nx.stateb := BUSYPOLL1; end if;
+  when BUSYPOLL1 => if(piobusy = '0') then nx.stateb := WAITDMW;   end if;
+  when WAITDMW =>
+    if        (this.ddr_wready = '1') then nx.stateb := WRITED;    end if;
+  when WRITED =>     if(ack_m2 = '1') then nx.stateb := WRITEC;    end if;
+  when WRITEC =>     if(ack_m2 = '1') then nx.stateb := BUSYPOLL2; end if;
+  when BUSYPOLL2 => if(piobusy = '0') then nx.stateb := WAITDMR;   end if;
+  when WAITDMR =>
+    if        (this.ddr_rready = '1') then nx.stateb := READD;     end if;
+  when others => -- READD
+	             if(ack_m2 = '1') then nx.stateb := IDLE;
+					   nx.stateb_ack := '1';   end if;
+  end case;
+
+
+  -- part 6.3
+  -- state machine (wd) - 1word (32 bit) crc processing state machine
+  -- initial value start
+                                     nx.statewd := this.statewd;
+                                       nx.statewd_ack := '0';
+  -- initial value end
+  case this.statewd is
+  when IDLE =>
+    if (this.statewd_en = '1') then  nx.statewd := WAITDMR; end if;
+  when WAITDMR =>
+    if (actp_o.t_end(6) = '1') and
+       (actp_o.t_end(5 downto 0) = this.r9_dmchm_crc) then
+                                     nx.statewd := OPER;    end if;
+  when others => -- OPER
+    if(this.crccb = '1' & x"f") then nx.statewd := IDLE;    end if;
+    if(this.crccb = '1' & x"e") then   nx.statewd_ack := '1'; end if;
+                                    -- 1e <-> statewd_ack 0->1 ff direct
+  end case;
+
+  -- crc bit counter ----------------------------------------------------------
+  if(this.statem = C1MEMCRC) and       -- memory crc
+    (this.statewd = OPER) then
+                        nx.crccb := std_logic_vector(unsigned(this.crccb) + 1);
+  elsif(this.statem = G4DTLOOPSE) then -- send crc 
+    if(this.stateb = WAITDMW) and
+      (this.ddr_wready = '1') and
+      (this.r4_sendcrcen = '1') then 
+                        nx.crccb := '1' & x"8"; -- bit 4-3 plays rool 
+                                                -- small state
+                        nx.r7_crcin := x"000000" & this.r7_spdata;
+    elsif(this.crccb = '1' & x"f") then
+                        nx.crccb := "0" & x"0"; -- end of 8 bit data
+    elsif(this.crccb(4 downto 3) = "11") then      --  5'h10-5'h1e
+                        nx.crccb := std_logic_vector(unsigned(this.crccb) + 1);
+    else                nx.crccb := this.crccb; end if;
+  else                  nx.crccb := this.crccb;
+  end if;
+
+  -- crc word counter (memory crc only) ----------------------------------------
+  if(this.statewd_ack = '1') then
+                        nx.crccw := std_logic_vector(unsigned(this.crccw) + 1);
+  elsif(write_r4cmdcr = '1') or
+       (write_r4cmdse = '1') then
+                        nx.crccw := x"00";
+  else                  nx.crccw := this.crccw;
+  end if;
+
+  -- initial value = this/reg-w
+--case this.statem is
+--when S4CMD_RESP =>
+--     nx.r14_wdsum := x"00000";
+--when S6BLOCKL =>
+--  if(this.stateb = WRITED) and
+--    (ack_m2 = '1') and
+--    (this.sdca_cmd4(3) = '1') and
+--    (this.sdbytec /= "11" & x"ff") then 
+--    nx.r14_wdsum := std_logic_vector(unsigned(this.r14_wdsum) + 
+--                                     unsigned(this.r7_spdata));
+--  end if;
+--when others =>
+--end case;
+
+  -- soft reset (during debug)
+  if(soft_reset_r4cmd = '1') then nx.stateb := IDLE; end if;
+  -- soft reset (during debug end)
+
+  -- part 7: access arbitration for spi2 db access
+
+  -- initial value start
+  nx.db_i_aint := NULL_DATA_O; -- address is overwritten in next
+  nx.db_i_aint.a := x"abcd0040";
+  -- initial value end
+
+  -- a, d, en
+  case nx.stateb is
+  when WRITED =>
+    nx.db_i_aint.en := '1';
+    nx.db_i_aint.a(2) := '1'; 
+    case this.statem is
+    when G4DTLOOPSE => tmp8b := this.r7_spdata;
+    when S3CMDW_ST =>
+--    tmp32b := this.r8_param_norm;
+--    case this.sdbytec(2 downto 0) is
+--    when "000"  =>   tmp8b := x"ff";
+--    when "001"  =>   tmp8b := this.r8_param_prev(31) & '1' &
+--                              this.r8_param_prev(29 downto 24);
+--                              -- makes 0x40 (bit 6) or
+--    when "010"  =>   tmp8b := tmp32b            (31 downto 24);
+--    when "011"  =>   tmp8b := tmp32b            (23 downto 16);
+--    when "100"  =>   tmp8b := tmp32b            (15 downto  8);
+--    when "101"  =>   tmp8b := tmp32b            ( 7 downto  0);
+--    when others =>   tmp8b := this.r8_param_prev(15 downto  8); -- for CRC
+--    end case;   --   |
+
+                       tmp8b := x"00";
+
+    when S6BLOCKL =>
+      if (this.sdca_cmd4(3) = '1') then -- write block period
+                       tmp8b := this.r7_spdata;
+      else             tmp8b := x"ff"; end if;
+    when F4STOPMULTI =>
+      case this.sdbytec(2 downto 0) is
+      when "000"  =>   tmp8b := x"52"; -- CMD12 or x"40"
+      when "110"  =>   tmp8b := x"75"; -- CRC7 for 52 00 00 00 00
+      when others =>   tmp8b := x"00"; end case;
+    when others =>     tmp8b := x"ff";
+    end case;
+    nx.db_i_aint.d :=       x"000000" &
+                       tmp8b;
+  when WRITEC =>
+    nx.db_i_aint.en := '1';
+    nx.db_i_aint.d := this.r6_speed & "000" & x"000006";
+  when READD =>
+    nx.db_i_aint.en := '1';
+    nx.db_i_aint.a(2) := '1'; 
+  when others => -- same as initial value
+  end case;
+
+  -- wr / we
+  case nx.stateb is
+  when WRITED | WRITEC => nx.db_i_aint.wr := '1';
+                          nx.db_i_aint.we := "1111";
+  when others          => -- nothing (use initail value)
+  end case;
+
+  -- part 8: byte count (sdbytec/r6count) control
+  -- nx.sdbytec(2 downto 0) is
+  if(state_grp_sf = '1') or (write_r4cmdsd  = '1') then
+    if((this.stateb = READD) and (ack_m2 = '1')) then
+                   nx.sdbytec := std_logic_vector(unsigned(this.sdbytec) + 1) ;
+    elsif(this.statem /= nx.statem) then
+      if(this.sdca_cmd4(3) = '0') or -- read
+        (this.statem /= S5RWDATAMK) then  -- write S5RWDATAMK -> S6BLOCKL
+                   nx.sdbytec := "00" & x"00";
+      else         nx.sdbytec := "11" & x"ff"; end if;
+    else           nx.sdbytec := this.sdbytec;
+    end if;
+  else             nx.sdbytec := this.sdbytec;
+  end if;
+
+  if -- general dma mode
+    ((state_grp_g = '1') and
+     (this.stateb = READD) and (ack_m2 = '1'))   or
+     -- sd-dma mode
+    ((this.statem = S3CMDW_ST) and 
+     (this.statem_1del = S2PARAM2) and
+     (this.r6_count(9 downto 0) /= "00" & x"00")) then
+                 nx.r6_count   := std_logic_vector(unsigned(this.r6_count) - 1);
+  end if;
+
+  -- part 9: dma output
+
+  if   (( ack_m2 = '1') and
+        ( this.statem  = G4DTLOOPSE) and
+        ( this.stateb  = WRITED) and
+        ( this.r6_count(23 downto 1) /= "000" & x"00000")) or
+                                      -- x"000000/000001"
+       (  this.statem  = G3PROSE) or           -- general send channel
+       -- general sd-card separator
+       (((this.statem /= S1PARAM1) and
+         (  nx.statem  = S1PARAM1)) or
+        ((this.statem /= S2PARAM2) and
+         (  nx.statem  = S2PARAM2))) then      -- sd dma parameter channel
+                                      nx.actp_i.req := '1' & this.r9_dmchp_sen;
+  elsif((  ack_m2 = '1') and
+        (  this.statem = G1DTLOOPRE) and
+        (  this.stateb = READD)) or            -- general receive channel
+       -- general sd-card separator
+       ((  dmareq_s6bl_rw = '1') and
+        (  ack_m2 = '1') and
+        (((this.sdca_cmd4(3) = '0') and
+          (this.stateb = READD)) or
+         ((this.sdca_cmd4(3) = '1') and
+          (this.stateb = WRITED) and
+          (this.sdbytec /= (SDBLK_LENGTH or ("00" & x"01")))))) then
+                                               -- sd block
+                                      nx.actp_i.req := '1' & this.r9_dmchd_rec;
+  elsif(this.statewd = IDLE) and
+       (  nx.statewd = WAITDMR) then  nx.actp_i.req := '1' & this.r9_dmchm_crc;
+  else                                nx.actp_i.req := '0' & "00" & x"0";
+  end if;
+
+  -- part 10: this.ddr_[rw]ready
+  -- memo: actp_d_rec_ack is set in part 5
+  if   ((this.statem /= S6BLOCKL) and
+        (this.statem /= G1DTLOOPRE)) or
+       ( this.first_byte_g = '1') then        nx.ddr_rready  := '1' ;
+  elsif((this.statem  = G1DTLOOPRE) and
+        (this.stateb_en = '1')) or
+        -- general / sd seperator
+       ((dmareq_s6bl_rw = '1') and
+        (this.sdca_cmd4(3) = '0') and
+        (this.stateb_en = '1') and
+        (this.sdbytec /= ("00" & x"00"))) then
+                                              nx.ddr_rready := '0';
+  elsif( actp_d_rec_ack = '1') then           nx.ddr_rready := '1' ;
+  else                                        nx.ddr_rready := this.ddr_rready;
+  end if;
+
+  if   ((this.statem /= S6BLOCKL) and           
+        (this.statem /= G3PROSE) and
+        (this.statem /= G4DTLOOPSE)) then     nx.ddr_wready  := '1' ;
+  elsif( this.statem  = G3PROSE) or
+       ((this.statem  = G4DTLOOPSE) and
+        (this.stateb = WAITDMW) and
+        (  nx.stateb = WRITED)) or
+        -- general / sd seperator
+       ((state_grp_sf = '1') and
+        (this.sdca_cmd4(3) = '1') and
+        (this.stateb = WAITDMW) and
+        (  nx.stateb = WRITED)) then          nx.ddr_wready  := '0';
+  elsif((state_grp_g = '1') and
+        (actp_p_sen_ack = '1')) or
+       ((state_grp_sf = '1') and
+        (actp_d_rec_ack = '1')) then          nx.ddr_wready := '1' ;
+  else                                        nx.ddr_wready := this.ddr_wready;
+  end if;
+
+  if  ( this.statem_1del = IDLE) and
+      ((this.statem = G1DTLOOPRE) or
+       (this.statem = G4DTLOOPSE)) then   nx.first_byte_g := '1';
+  elsif(this.stateb_ack = '1') then       nx.first_byte_g := '0';
+  else                                    nx.first_byte_g := this.first_byte_g;
+  end if;
+
+  -- part 11: crc operation
+  -- nx.r11_crcd(12)
+
+  -- CRC operator align condition 
+                      tmp2b := this.crccb(4 downto 3);
+  -- initial vale start
+                                             crcd_memalign := '0';
+  -- initial vale end
+  if   (this.crccw = x"00") then
+    case this.r10_mcrc_a is
+    when "00"   =>                           crcd_memalign := '1';
+    when "01"   => if(tmp2b    /= "00") then crcd_memalign := '1'; end if;
+    when "10"   => if(tmp2b(1)  = '1' ) then crcd_memalign := '1'; end if;
+    when others => if(tmp2b     = "11") then crcd_memalign := '1'; end if;
+    end case;
+  elsif(this.crccw = crccwlimitb) then
+    case this.r10_mcrc_a is
+    -- never happen when "00" => -> same control to others
+    when "01"   => if(tmp2b     = "00") then crcd_memalign := '1'; end if;
+    when "10"   => if(tmp2b(1) /= '1' ) then crcd_memalign := '1'; end if;
+    when others => if(tmp2b    /= "11") then crcd_memalign := '1'; end if;
+    end case;
+  else                                       crcd_memalign := '1';
+  end if;
+
+  --  CRC 16 Generato/Checker Schematitc
+  --             +-F-F-F-F-F->(+)-F-F-F-F-F-F-F->(+)-F-F-F-F-+---[=> out
+  --             |             |                  |          |
+  --  in -> (+) -+------->-----+------->----------+          |
+  --         |                                               |
+  --         +-----------<-------------<---------------------+
+  --
+  --  F=flip-flop, (+) = 2-input exor gate
+
+  if((this.statem       = C1MEMCRC) and    -- memory crc
+     (this.statem_1del /= C1MEMCRC)) or
+    ((this.statem       = IDLE) and        -- send crc 
+     (write_r4cmdse     = '1') and
+     (db_i.d(5)         = '1')) then
+                               nx.r11_crcd := x"0000";
+  elsif((this.statewd  =  OPER    ) and     -- memory crc
+        (crcd_memalign =  '1'     )) or
+       ((this.statem   = G4DTLOOPSE) and    -- send crc
+        (this.r4_sendcrcen = '1') and
+        (this.crccb(4 downto 3) = "11")) then
+                               nx.r11_crcd := this.r11_crcd(14 downto 0) & '0';
+    if(this.r11_crcd(15) /=
+       this.r7_crcin(31 - to_integer(unsigned( this.crccb)))) then
+                               nx.r11_crcd(12) := not nx.r11_crcd(12);
+                               nx.r11_crcd( 5) := not nx.r11_crcd( 5);
+                               nx.r11_crcd( 0) := not nx.r11_crcd( 0); end if;
+  else                         nx.r11_crcd := this.r11_crcd;
+  end if;
+
+
+  -- part 12: ff update
+    nx.statem_1del     := this.statem     ;
+    nx.spi2_ack        := db_o_spi2.ack;
+--  nx.sdca_cmd4       := nx.r8_param_prev(27 downto 24);
+    nx.sdca_cmd4       := x"0";
+    -- ff update main part
+    this               := nx; -- all reg_t members update
+
+  end process;
+
+  -- part 51: instance spi2 
+  u_spi2 : entity work.spi2(arch)
+  generic map ( -- generic information see spi2.vhm
+    NUM_CS          => NUM_CS,
+    CLK_FREQ        => CLK_FREQ,
+    LOW_SPEED_FREQ  => LOW_SPEED_FREQ,
+    HIGH_SPEED_FREQ => HIGH_SPEED_FREQ )
+  port map (
+    clk     => clk  , rst     => rst  , db_i    => db_i_spi2    ,
+    db_o    => db_o_spi2              , spi_clk => spi_clk ,
+    cs      => cs   , miso    => miso , mosi    => mosi ,
+    busy    => piobusy ,
+    cpha    => this'register.r6_cpha , 
+    cpol    => this'register.r6_cpol );
+
+  -- part 52: output drive
+    actp_i  <= this'register.actp_i ;   -- : out actp_i_t;
+    int     <= this'register.int_out ;    -- : out std_logic;
+
+end arch;

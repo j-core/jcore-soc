@@ -219,7 +219,7 @@
           (for [^Constant c (.getVhdlObjects g)]
             [(v/id c)
              {:type (extract-type (.getType c))
-              :default-value (.getDefaultValue c)}])))
+              :default-value (v/resolve-expression c {})}])))
        (into {})))
 
 (defrecord EnumLiteral [^String name])
@@ -236,12 +236,12 @@
   (errors/add-warning (str *extract-file* ": " msg))
   nil)
 
-(def ^:dynamic ^{:private true} *sei-attributes* nil)
+(def ^:dynamic ^{:private true} *soc-attributes* nil)
 
-(def ^{:private true} pin-attr-prefix "sei_pin_")
-(def ^{:private true} sig-attr-prefix "sei_sig_")
+(def ^{:private true} pin-attr-prefix "soc_pin_")
+(def ^{:private true} sig-attr-prefix "soc_sig_")
 
-(defn- sei-attr-id? [^String id]
+(defn- soc-attr-id? [^String id]
   (.startsWith id pin-attr-prefix))
 
 (defn- sig-attr-id? [^String id]
@@ -416,26 +416,26 @@
         ports (->> decls
                    (filter #(and (= :attr-spec (:type %))
                                  (:attribute %)
-                                 (.startsWith (:id (:attribute %)) "sei_port_")))
+                                 (.startsWith (:id (:attribute %)) "soc_port_")))
                    (mapcat
                     (fn [attr]
                       (if (= :signal (:entity-class attr))
                         (map vector
                              (:entities attr)
                              (repeat attr))
-                        (add-warning (str "Can only apply sei_port attribute to signal")))))
+                        (add-warning (str "Can only apply soc_port attribute to signal")))))
                    (reduce
                     (fn [ports [port attr]]
                       ;;(println "ATTR" port attr)
                       (if (contains? ports port)
                         (condp = (:id (:attribute attr))
-                          "sei_port_global_name"
+                          "soc_port_global_name"
                           (assoc-in ports [port :global-signal] (s/lower-case (:value attr)))
-                          "sei_port_local_name"
+                          "soc_port_local_name"
                           (assoc-in ports [port :local-signal] (s/lower-case (:value attr)))
-                          "sei_port_irq"
+                          "soc_port_irq"
                           (assoc-in ports [port :irq?] (:value attr))
-                          "sei_port_clock"
+                          "soc_port_clock"
                           (assoc-in ports [port :clock?] (:value attr))
                           ports)
                         (do
@@ -558,7 +558,7 @@
   AttributeSpecification
   (extract-impl [a]
     [(let [r (extract-one (.getAttribute a))
-           attr (get @*sei-attributes* (:id r))
+           attr (get @*soc-attributes* (:id r))
            foo
            {:type :attr-spec
             :attribute attr
@@ -601,8 +601,8 @@
       ;; store pin attribute declarations in an atom for later use
       (doseq [d decls
               :when (and (= (:type d) :attr)
-                         (or (.startsWith (:id d) "sei_")))]
-        (swap! *sei-attributes* assoc (:id d)
+                         (or (.startsWith (:id d) "soc_")))]
+        (swap! *soc-attributes* assoc (:id d)
                (with-meta d
                  (assoc (meta d)
                    :value-fn (pin-attr-value-fn d)))))
@@ -948,7 +948,7 @@
 
 (defn extract-all [file-names & opts]
   (errors/wrap-errors
-   (binding [*sei-attributes* (atom {})]
+   (binding [*soc-attributes* (atom {})]
      (let [common (common-directory file-names)
            file-names (apply dependency-order file-names opts)
            parsed-files (parse-files file-names common)

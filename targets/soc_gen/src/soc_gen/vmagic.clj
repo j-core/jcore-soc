@@ -176,6 +176,7 @@
     ForGenerateStatement
     IfGenerateStatement]))
 
+(declare literal)
 
 (defn vobj [x]
   (:vobj (meta x)))
@@ -246,6 +247,30 @@
 
 (defn func-call-pos [fn & args]
   (apply func-call fn (map assoc-elem args)))
+
+(defn func-call-s-expr
+  "Given an s-expr representing a vhdl function call with 0 or more
+  literal arguments, return the corresponding vhdl. Function calls can
+  be nested, so arguments can themselves be the result of function
+  calls."
+  [s-expr]
+  (let [[f & args] s-expr
+        num-args (count args)
+
+        arg-vals
+        (map
+         (fn [arg]
+           (if (list? arg)
+             (func-call-s-expr arg)
+             (literal arg)))
+         args)]
+    (when (and (symbol? f) (not-any? nil? args))
+      ;; Create a fake function to use in the function call. The
+      ;; return and args types don't matter. (The number of arguments
+      ;; may not even matter). Just an awkward bending of vmagic to
+      ;; get it to output a function call.
+      (let [fake-fn (apply func-dec (name f) std-logic (repeat num-args ["fake" std-logic]))]
+        (apply func-call-pos fake-fn arg-vals)))))
 
 (defn clj-name [name]
   (s/lower-case
@@ -1076,7 +1101,8 @@
    (instance? Constant e)
    (or
     (get vals (get-id e))
-    (.getDefaultValue e)
+    (when-let [default (.getDefaultValue e)]
+      (resolve-expression default vals))
     e)
    :else e))
 

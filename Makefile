@@ -4,17 +4,22 @@ all: help
 COMPONENTS :=
 COMPONENTS += clk
 COMPONENTS += cpu
+COMPONENTS += ddr
 COMPONENTS += ddr2
 COMPONENTS += dma
-COMPONENTS += icache
+COMPONENTS += cpu/cache
 COMPONENTS += misc
 COMPONENTS += uartlite
+COMPONENTS += emac
+COMPONENTS += ring_bus
+COMPONENTS += gps_if2
 
 # libraries from lib/ whose VHDL is included in builds
 LIBS :=
 LIBS += hwutils
 LIBS += reg_file_struct
 LIBS += memory_tech_lib
+LIBS += fixed_dsm_pkg
 
 VHDL_DIRS := targets
 VHDL_DIRS += $(addprefix components/,$(COMPONENTS))
@@ -39,7 +44,7 @@ CLEAN_DIRS += boot
 CLEAN_DIRS += $(TEST_DIRS) $(TEST_DIRS2)
 CLEAN_DIRS := $(sort $(CLEAN_DIRS))
 
-REVISION := "open"
+REVISION := $(shell hg log -r . --template "{latesttag}-{latesttagdistance}-{node|short}")
 export REVISION
 
 ISE_VERSION := $(shell xst -help 2>/dev/null | head -1 | sed -n 's/^.*Release \([^ ]*\) .*/\1/p')
@@ -111,9 +116,7 @@ BOARD_NAMES := $(notdir $(BOARD_NAMES))
 BOARD_NAMES := $(sort $(BOARD_NAMES))
 #$(info BOARD_NAMES: $(BOARD_NAMES))
 
-override MAKE_TIME := $(shell date +%Y-%m-%d_%H-%M-%S)
-
-$(BOARD_NAMES): REL_OUTPUT_DIR=output/$(MAKE_TIME)_$@
+$(BOARD_NAMES): REL_OUTPUT_DIR=output/$@
 $(BOARD_NAMES): BOARD_NAME = $@
 $(BOARD_NAMES): BOARD_DIR = $(abspath targets/boards/$@)
 $(BOARD_NAMES): TOP_DIR := $(abspath .)
@@ -122,32 +125,19 @@ $(BOARD_NAMES): VHDL_FILES := $(VHDS_FPGA)
 $(BOARD_NAMES): VHDL_FILES_ASIC := $(VHDS_ASIC)
 
 $(BOARD_NAMES): tools
-# create output directory
-	@echo "Creating output directory: $(REL_OUTPUT_DIR)"
-# create parent output directory with -p
-	mkdir -p "$(dir $(REL_OUTPUT_DIR))"
-# but create actual output directory without -p so it fails if it
-# already exists
-	mkdir "$(REL_OUTPUT_DIR)"
-# create a handy last_output link
-ifneq ($(LAST_OUTPUT),false)
-	rm -f last_output
-	ln -Tfs "$(REL_OUTPUT_DIR)" last_output
-endif
-# create a stub Makefile in the output directory that captures the
-# above variables so the other targets can be run later
-	@echo "REVISION:=$(REVISION)" >> "$(REL_OUTPUT_DIR)/Makefile"
-	@echo "ISE_VERSION:=$(ISE_VERSION)" >> "$(REL_OUTPUT_DIR)/Makefile"
-	@echo "BOARD_NAME:=$(BOARD_NAME)" >> "$(REL_OUTPUT_DIR)/Makefile"
-	@echo "BOARD_DIR:=$(BOARD_DIR)" >> "$(REL_OUTPUT_DIR)/Makefile"
-	@echo "TOP_DIR:=$(TOP_DIR)" >> "$(REL_OUTPUT_DIR)/Makefile"
-	@echo "OUTPUT_DIR:=$(TOP_DIR)/$(REL_OUTPUT_DIR)" >> "$(REL_OUTPUT_DIR)/Makefile"
-	@echo "TOOLS_DIR:=$(TOOLS_DIR)" >> "$(REL_OUTPUT_DIR)/Makefile"
-	@echo "VHDL_FILES:=$(VHDL_FILES)" >> "$(REL_OUTPUT_DIR)/Makefile"
-	@echo "VHDL_FILES_ASIC:=$(VHDL_FILES_ASIC)" >> "$(REL_OUTPUT_DIR)/Makefile"
-	@echo "include ../../targets/boards/$@/Makefile" >> "$(REL_OUTPUT_DIR)/Makefile"
-
-# Run board makefile in with the output working directory
+	mkdir -p "$(REL_OUTPUT_DIR)"
+	echo "REVISION:=$(REVISION)" >> "$(REL_OUTPUT_DIR)/Makefile.tmp"
+	echo "ISE_VERSION:=$(ISE_VERSION)" >> "$(REL_OUTPUT_DIR)/Makefile.tmp"
+	echo "BOARD_NAME:=$(BOARD_NAME)" >> "$(REL_OUTPUT_DIR)/Makefile.tmp"
+	echo "BOARD_DIR:=$(BOARD_DIR)" >> "$(REL_OUTPUT_DIR)/Makefile.tmp"
+	echo "TOP_DIR:=$(TOP_DIR)" >> "$(REL_OUTPUT_DIR)/Makefile.tmp"
+	echo "OUTPUT_DIR:=$(TOP_DIR)/$(REL_OUTPUT_DIR)" >> "$(REL_OUTPUT_DIR)/Makefile.tmp"
+	echo "TOOLS_DIR:=$(TOOLS_DIR)" >> "$(REL_OUTPUT_DIR)/Makefile.tmp"
+	echo "VHDL_FILES:=$(VHDL_FILES)" >> "$(REL_OUTPUT_DIR)/Makefile.tmp"
+	echo "VHDL_FILES_ASIC:=$(VHDL_FILES_ASIC)" >> "$(REL_OUTPUT_DIR)/Makefile.tmp"
+	echo "include ../../targets/boards/$@/Makefile" >> "$(REL_OUTPUT_DIR)/Makefile.tmp"
+	test -e "$(REL_OUTPUT_DIR)/Makefile" && cmp "$(REL_OUTPUT_DIR)/Makefile.tmp" "$(REL_OUTPUT_DIR)/Makefile" || mv "$(REL_OUTPUT_DIR)/Makefile.tmp" "$(REL_OUTPUT_DIR)/Makefile"
+	rm -f "$(REL_OUTPUT_DIR)/Makefile.tmp"
 	make -C "$(REL_OUTPUT_DIR)" $(TARGET)
 
 ################################################################################
@@ -165,7 +155,9 @@ ifeq ($(wildcard $(TOP_DIR)/soc_gen.jar),)
 soc_gen:
 	@command -v lein || (printf "***************************************************************************\n****** Cannot find lein tool (http://leiningen.org/) nor soc_gen.jar ******\n****** One is required to run the soc_gen tool.                      ******\n***************************************************************************\n" && false)
 	(cd targets/soc_gen; lein run --all "$(BOARDS)")
-	@echo "Done"
+	@echo "Done (ph1)"
+	(cd targets/soc_gen/phase2; ./soc_gen_postprocess_ph2 "$(BOARDS)")
+	@echo "Done (ph2)"
 
 else
 
@@ -173,7 +165,9 @@ else
 soc_gen:
 	@echo "Running soc_gen.jar"
 	(cd targets/soc_gen; java -jar ../../soc_gen.jar --all "$(BOARDS)")
-	@echo "Done"
+	@echo "Done (ph1)"
+	(cd targets/soc_gen/phase2; ./soc_gen_postprocess_ph2 "$(BOARDS)")
+	@echo "Done (ph2)"
 
 endif
 

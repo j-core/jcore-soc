@@ -8,5 +8,14 @@
  :ports {"rtc_sec" nil
          "rtc_nsec" nil
          "enmi_i" {:value 1}
+         "cpy" "cpu1_copro_i"
+         "cpa" "cpu1_copro_o"
+         "db_cctrans_o" "db_cctrans_o"
+         "cacheb_ctrl_ic" "icache1_ctrl"
+         "cacheb_ctrl_dc" "dcache1_ctrl"
+         "aic_com_i" "aic_com_01"
+         "aic_com_o" "aic_com_10"
+         "cpu1eni" nil
          "event_i" "cpu1_event_o"
-         "event_o" "cpu1_event_i"}}
+         "event_o" "cpu1_event_i"
+         "reboot" "reboot2"}}

@@ -1,16 +1,18 @@
-all: $(BOARD_NAME).bin $(BOARD_NAME).mcs
+all: $(BOARD_NAME).bin $(BOARD_NAME).mcs dt.dtb
 
 # Set config
 include $(TOP_DIR)/soc_config.mk
 
 include $(TOOLS_DIR)/soc.mk
 
-boot.elf: force
+boot.elf: force dt.S
 	make -C $(TOP_DIR)/boot REVISION="$(REVISION)" EXTRA_CFLAGS="-I$(BOARD_DIR)" \
 		DDR_TYPE=lpddr2 \
 		CONFIG_GRLCD=0 \
 		CONFIG_LCD_LOGO=0 \
 		CONFIG_SEVENSEGMENT=1 \
+		CONFIG_DEVTREE_FILENAME=forced.dtb \
+		CONFIG_DEVTREE_ASM_FILE=$(OUTPUT_DIR)/dt.S \
 		clean all
 	cp "$(TOP_DIR)/boot/bin/boot.elf" .
 
